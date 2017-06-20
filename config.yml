@@ -1,0 +1,23 @@
+logfile: ./daemon.log
+lvs:
+- name: http
+  address: 10.0.255.100
+  port: 80
+  schedule: wrr
+  type: dsr
+  servers:
+    - address: 10.0.255.101
+      port: 80
+    - address: 10.0.255.102
+      port: 80
+
+- name: https 
+  address: 10.0.255.100
+  port: 443 
+  schedule: wrr
+  type: dsr
+  servers:
+    - address: 10.0.255.101
+      port: 443 
+    - address: 10.0.255.102
+      port: 443 
