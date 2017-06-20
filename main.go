@@ -19,9 +19,16 @@ const (
 )
 
 type Config struct {
-	LogFile        string      "yaml:`logfile`"
-	EnableDebugLog bool        "yaml:`enable_debug_log`"
-	Lvs            []ConfigLvs "yaml:`lvs`"
+	LogFile        string       "yaml:`logfile`"
+	EnableDebugLog bool         "yaml:`enable_debug_log`"
+	Vrrp           []ConfigVrrp "yaml:`vrrp`"
+	Lvs            []ConfigLvs  "yaml:`lvs`"
+}
+
+type ConfigVrrp struct {
+	Vrid     int    "yaml:`vrid`"
+	Priority int    "yaml:`priority`"
+	Address  string "yaml:`address`"
 }
 
 type ConfigLvs struct {
@@ -51,6 +58,7 @@ func main() {
 	}
 	var conf Config
 	err = yaml.Unmarshal(buf, &conf)
+	pp.Println(&conf)
 
 	// ログ
 	logFile, err := os.OpenFile(conf.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)

@@ -1,5 +1,12 @@
 logfile: ./daemon.log
 enable_debug_log: true
+vrrp:
+- vrid: 200
+  priority: 100
+  address: 10.0.255.100
+- vrid: 200
+  priority: 100
+  address: 10.0.255.101
 lvs:
 - name: http
   address: 10.0.255.100
@@ -11,9 +18,8 @@ lvs:
       port: 80
     - address: 10.0.255.102
       port: 80
-
 - name: https 
-  address: 10.0.255.100
+  address: 10.0.255.101
   port: 443 
   schedule: wrr
   type: dsr
