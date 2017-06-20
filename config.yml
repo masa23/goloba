@@ -1,4 +1,5 @@
 logfile: ./daemon.log
+enable_debug_log: true
 lvs:
 - name: http
   address: 10.0.255.100

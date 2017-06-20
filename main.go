@@ -3,13 +3,13 @@ package main
 import (
 	"flag"
 	"io/ioutil"
-	"log"
 	"net"
 	"os"
 	"syscall"
 
 	yaml "gopkg.in/yaml.v2"
 
+	"github.com/hnakamur/ltsvlog"
 	"github.com/k0kubun/pp"
 	"github.com/mqliang/libipvs"
 )
@@ -19,8 +19,9 @@ const (
 )
 
 type Config struct {
-	LogFile string      "yaml:`logfile`"
-	Lvs     []ConfigLvs "yaml:`lvs`"
+	LogFile        string      "yaml:`logfile`"
+	EnableDebugLog bool        "yaml:`enable_debug_log`"
+	Lvs            []ConfigLvs "yaml:`lvs`"
 }
 
 type ConfigLvs struct {
@@ -52,22 +53,23 @@ func main() {
 	err = yaml.Unmarshal(buf, &conf)
 
 	// ログ
-	lf, err := os.OpenFile(conf.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile(conf.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		log.Fatal("error opening file: ", err.Error())
+		panic(err)
 	}
-	defer lf.Close()
-	log.SetOutput(lf)
-	log.Println("server start")
+	defer logFile.Close()
+	ltsvlog.Logger = ltsvlog.NewLTSVLogger(logFile, conf.EnableDebugLog)
+
+	ltsvlog.Logger.Info().String("msg", "Start keepalivego!").Log()
 
 	ipvs, err := libipvs.New()
 	if err != nil {
-		log.Fatal("error libipvs load: ", err.Error())
+		ltsvlog.Logger.Err(ltsvlog.Err(err).String("msg", "faild libipvs load").Stack(""))
 	}
 
 	// IPVS初期化
 	if err := ipvs.Flush(); err != nil {
-		log.Fatal("error ipvs initialize: ", err.Error())
+		ltsvlog.Logger.Err(ltsvlog.Err(err).String("msg", "faild to ipvs initialize").Stack(""))
 	}
 
 	// serviceの設定
