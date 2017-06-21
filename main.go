@@ -10,7 +10,6 @@ import (
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
-	"github.com/k0kubun/pp"
 	"github.com/mqliang/libipvs"
 )
 
@@ -166,16 +165,23 @@ func ConfigReload(ipvs libipvs.IPVSHandle) {
 			for _, ipvsDest := range ipvsDests {
 				if ipvsDest.Address.Equal(net.ParseIP(server.Address)) {
 					exist = true
-					pp.Println(ipvsDests)
-					pp.Println(server)
 					break
 				}
+			}
+			var fwd libipvs.FwdMethod
+			switch serviceConf.Type {
+			case "nat":
+				fwd = libipvs.IP_VS_CONN_F_MASQ
+			case "dr":
+				fwd = libipvs.IP_VS_CONN_F_DROUTE
+			default:
+				fwd = libipvs.IP_VS_CONN_F_MASQ
 			}
 			dest := libipvs.Destination{
 				Address:       net.ParseIP(server.Address),
 				AddressFamily: syscall.AF_INET,
 				Port:          server.Port,
-				FwdMethod:     libipvs.IP_VS_CONN_F_DROUTE,
+				FwdMethod:     fwd,
 				Weight:        server.Weight,
 			}
 			if exist {

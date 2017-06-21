@@ -12,7 +12,7 @@ lvs:
   address: 10.0.255.100
   port: 80
   schedule: wrr
-  type: dsr
+  type: dr
   servers:
     - address: 10.0.255.101
       port: 80
@@ -24,7 +24,7 @@ lvs:
   address: 10.0.255.101
   port: 443
   schedule: wrr
-  type: dsr
+  type: nat
   servers:
     - address: 10.0.255.101
       port: 443
