@@ -16,15 +16,19 @@ lvs:
   servers:
     - address: 10.0.255.101
       port: 80
+      weight: 100
     - address: 10.0.255.102
       port: 80
+      weight: 200
 - name: https
   address: 10.0.255.101
   port: 443
   schedule: wrr
   type: dsr
- servers:
+  servers:
     - address: 10.0.255.101
       port: 443
+      weight: 10
     - address: 10.0.255.102
       port: 443
+      weight: 20
