@@ -31,7 +31,7 @@ type ipv6PseudoHeader struct {
 // IPConn creates a net.IPConn using the given local and remote addresses using IP protocol
 // 112 (VRRP).
 func IPConn(localAddr, remoteAddr net.IP) (*net.IPConn, error) {
-	c, err := net.ListenIP(fmt.Sprintf("ip:%d", Port), &net.IPAddr{IP: localAddr})
+	c, err := net.ListenIP(fmt.Sprintf("ip:%d", vrrpPort), &net.IPAddr{IP: localAddr})
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("fail to listen, err=%v", err)
@@ -160,7 +160,7 @@ func NewIPHAConn(laddr, raddr net.IP) (HAConn, error) {
 func listenMulticastIPv4(gaddr, laddr net.IP) (*net.IPConn, error) {
 	gaddr = gaddr.To4()
 	laddr = laddr.To4()
-	c, err := net.ListenIP(fmt.Sprintf("ip4:%d", Port), &net.IPAddr{IP: gaddr})
+	c, err := net.ListenIP(fmt.Sprintf("ip4:%d", vrrpPort), &net.IPAddr{IP: gaddr})
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +431,7 @@ func checksum(advert *Advertisement, srcIP, dstIP net.IP) (uint16, error) {
 	if src, dst := srcIP.To4(), dstIP.To4(); src != nil && dst != nil {
 		// IPv4
 		hdr := &ipv4PseudoHeader{
-			Protocol: 112,
+			Protocol: vrrpPort,
 			VRRPLen:  vrrpAdvertSize,
 		}
 		copy(hdr.Src[:], src)
@@ -444,7 +444,7 @@ func checksum(advert *Advertisement, srcIP, dstIP net.IP) (uint16, error) {
 		// IPv6
 		hdr := &ipv6PseudoHeader{
 			VRRPLen:    vrrpAdvertSize,
-			NextHeader: 112,
+			NextHeader: vrrpPort,
 		}
 		copy(hdr.Src[:], src)
 		copy(hdr.Dst[:], dst)

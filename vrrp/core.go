@@ -40,6 +40,9 @@ const (
 	// vrrpVersionType represents the version and Advertisement type of VRRP
 	// packets that this module supports.
 	vrrpVersionType = vrrpVersion<<4 | vrrpAdvertType
+
+	// vrrpPort is the port for VRRP
+	vrrpPort = 112
 )
 
 // NodeConfig specifies the configuration for a Node.
