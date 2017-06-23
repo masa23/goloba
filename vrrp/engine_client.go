@@ -4,12 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/rpc"
 	"sync"
 	"time"
 
-	"github.com/google/seesaw/common/ipc"
-	"github.com/google/seesaw/common/seesaw"
 	"github.com/hnakamur/ltsvlog"
 	"github.com/mdlayher/arp"
 )
@@ -18,96 +15,35 @@ const engineTimeout = 10 * time.Second
 
 // Engine represents an interface to a Seesaw Engine.
 type Engine interface {
-	HAConfig() (*seesaw.HAConfig, error)
-	HAState(seesaw.HAState) error
-	HAUpdate(seesaw.HAStatus) (bool, error)
-}
-
-// EngineClient implements the Engine interface. It connects to the Seesaw
-// Engine UNIX domain socket specified by Socket.
-type EngineClient struct {
-	Socket string
-}
-
-// HAConfig requests the HAConfig from the Seesaw Engine.
-func (e *EngineClient) HAConfig() (*seesaw.HAConfig, error) {
-	engineConn, err := net.DialTimeout("unix", e.Socket, engineTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("HAConfig: Dial failed: %v", err)
-	}
-	engineConn.SetDeadline(time.Now().Add(engineTimeout))
-	engine := rpc.NewClient(engineConn)
-	defer engine.Close()
-
-	var config seesaw.HAConfig
-	ctx := ipc.NewTrustedContext(seesaw.SCHA)
-	if err := engine.Call("SeesawEngine.HAConfig", ctx, &config); err != nil {
-		return nil, fmt.Errorf("HAConfig: SeesawEngine.HAConfig failed: %v", err)
-	}
-	return &config, nil
-}
-
-// HAState informs the Seesaw Engine of the current HAState.
-func (e *EngineClient) HAState(state seesaw.HAState) error {
-	engineConn, err := net.DialTimeout("unix", e.Socket, engineTimeout)
-	if err != nil {
-		return fmt.Errorf("HAState: Dial failed: %v", err)
-	}
-	engineConn.SetDeadline(time.Now().Add(engineTimeout))
-	engine := rpc.NewClient(engineConn)
-	defer engine.Close()
-
-	var reply int
-	ctx := ipc.NewTrustedContext(seesaw.SCHA)
-	if err := engine.Call("SeesawEngine.HAState", &ipc.HAState{ctx, state}, &reply); err != nil {
-		return fmt.Errorf("HAState: SeesawEngine.HAState failed: %v", err)
-	}
-	return nil
-}
-
-// HAUpdate informs the Seesaw Engine of the current HAStatus.
-// The Seesaw Engine may request a failover in response.
-func (e *EngineClient) HAUpdate(status seesaw.HAStatus) (bool, error) {
-	engineConn, err := net.DialTimeout("unix", e.Socket, engineTimeout)
-	if err != nil {
-		return false, fmt.Errorf("HAUpdate: Dial failed: %v", err)
-	}
-	engineConn.SetDeadline(time.Now().Add(engineTimeout))
-	engine := rpc.NewClient(engineConn)
-	defer engine.Close()
-
-	var failover bool
-	ctx := ipc.NewTrustedContext(seesaw.SCHA)
-	if err := engine.Call("SeesawEngine.HAUpdate", &ipc.HAStatus{ctx, status}, &failover); err != nil {
-		return false, fmt.Errorf("HAUpdate: SeesawEngine.HAUpdate failed: %v", err)
-	}
-	return failover, nil
+	HAConfig() (*HAConfig, error)
+	HAState(HAState) error
+	HAUpdate(HAStatus) (bool, error)
 }
 
 // DummyEngine implements the Engine interface for testing purposes.
 type DummyEngine struct {
-	Config *seesaw.HAConfig
+	Config *HAConfig
 }
 
 // HAConfig returns the HAConfig for a DummyEngine.
-func (e *DummyEngine) HAConfig() (*seesaw.HAConfig, error) {
+func (e *DummyEngine) HAConfig() (*HAConfig, error) {
 	return e.Config, nil
 }
 
 // HAState does nothing.
-func (e *DummyEngine) HAState(state seesaw.HAState) error {
+func (e *DummyEngine) HAState(state HAState) error {
 	return nil
 }
 
 // HAUpdate does nothing.
-func (e *DummyEngine) HAUpdate(status seesaw.HAStatus) (bool, error) {
+func (e *DummyEngine) HAUpdate(status HAStatus) (bool, error) {
 	return false, nil
 }
 
 // VIPHAConfig represents the high availability configuration for a node in a
 // Seesaw cluster.
 type VIPHAConfig struct {
-	seesaw.HAConfig
+	HAConfig
 	VIP          net.IP
 	VIPNet       *net.IPNet
 	VIPInterface *net.Interface
@@ -122,12 +58,12 @@ type VIPUpdateEngine struct {
 }
 
 // HAConfig returns the HAConfig for a VIPUpdateEngine.
-func (e *VIPUpdateEngine) HAConfig() (*seesaw.HAConfig, error) {
+func (e *VIPUpdateEngine) HAConfig() (*HAConfig, error) {
 	return &e.Config.HAConfig, nil
 }
 
 // HAState does nothing.
-func (e *VIPUpdateEngine) HAState(state seesaw.HAState) error {
+func (e *VIPUpdateEngine) HAState(state HAState) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -139,7 +75,7 @@ func (e *VIPUpdateEngine) HAState(state seesaw.HAState) error {
 		}).String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).Stack("")
 	}
 
-	if state == seesaw.HAMaster {
+	if state == HAMaster {
 		if hasVIP {
 			ltsvlog.Logger.Info().String("msg", "HAState called but already aquired VIP").Sprintf("state", "%v", state).
 				String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).
@@ -222,6 +158,6 @@ func sendGARPLoop(ctx context.Context, vip net.IP) {
 }
 
 // HAUpdate does nothing.
-func (e *VIPUpdateEngine) HAUpdate(status seesaw.HAStatus) (bool, error) {
+func (e *VIPUpdateEngine) HAUpdate(status HAStatus) (bool, error) {
 	return false, nil
 }

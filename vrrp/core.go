@@ -3,11 +3,12 @@ package vrrp
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
-	"github.com/google/seesaw/common/seesaw"
 	"github.com/hnakamur/ltsvlog"
 )
 
@@ -47,7 +48,7 @@ const (
 
 // NodeConfig specifies the configuration for a Node.
 type NodeConfig struct {
-	seesaw.HAConfig
+	HAConfig
 	ConfigCheckInterval     time.Duration
 	ConfigCheckMaxFailures  int
 	ConfigCheckRetryDelay   time.Duration
@@ -64,14 +65,14 @@ type Node struct {
 	conn                 HAConn
 	engine               Engine
 	statusLock           sync.RWMutex
-	haStatus             seesaw.HAStatus
+	haStatus             HAStatus
 	sendCount            uint64
 	receiveCount         uint64
 	masterDownInterval   time.Duration
 	lastMasterAdvertTime time.Time
 	errChannel           chan error
 	recvChannel          chan *advertisement
-	stopSenderChannel    chan seesaw.HAState
+	stopSenderChannel    chan HAState
 	shutdownChannel      chan bool
 }
 
@@ -84,10 +85,10 @@ func NewNode(cfg NodeConfig, conn HAConn, engine Engine) *Node {
 		lastMasterAdvertTime: time.Now(),
 		errChannel:           make(chan error),
 		recvChannel:          make(chan *advertisement, 20),
-		stopSenderChannel:    make(chan seesaw.HAState),
+		stopSenderChannel:    make(chan HAState),
 		shutdownChannel:      make(chan bool),
 	}
-	n.setState(seesaw.HABackup)
+	n.setState(HABackup)
 	n.resetMasterDownInterval(cfg.MasterAdvertInterval)
 	return n
 }
@@ -105,14 +106,14 @@ func (n *Node) resetMasterDownInterval(advertInterval time.Duration) {
 }
 
 // state returns the current HA state for this node.
-func (n *Node) state() seesaw.HAState {
+func (n *Node) state() HAState {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.haStatus.State
 }
 
 // setState changes the HA state for this node.
-func (n *Node) setState(s seesaw.HAState) {
+func (n *Node) setState(s HAState) {
 	n.statusLock.Lock()
 	defer n.statusLock.Unlock()
 	if n.haStatus.State != s {
@@ -123,7 +124,7 @@ func (n *Node) setState(s seesaw.HAState) {
 }
 
 // status returns the current HA status for this node.
-func (n *Node) status() seesaw.HAStatus {
+func (n *Node) status() HAStatus {
 	n.statusLock.Lock()
 	defer n.statusLock.Unlock()
 	n.haStatus.Sent = atomic.LoadUint64(&n.sendCount)
@@ -150,7 +151,7 @@ func (n *Node) Run() error {
 	go n.reportStatus()
 	go n.checkConfig()
 
-	for n.state() != seesaw.HAShutdown {
+	for n.state() != HAShutdown {
 		if err := n.runOnce(); err != nil {
 			return err
 		}
@@ -165,32 +166,32 @@ func (n *Node) Shutdown() {
 
 func (n *Node) runOnce() error {
 	switch s := n.state(); s {
-	case seesaw.HABackup:
+	case HABackup:
 		switch newState := n.doBackupTasks(); newState {
-		case seesaw.HABackup:
+		case HABackup:
 			// do nothing
-		case seesaw.HAMaster:
+		case HAMaster:
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "received advertisements").Uint64("receiveCount", atomic.LoadUint64(&n.receiveCount)).Int("recvChannelLen", len(n.recvChannel)).Log()
 				ltsvlog.Logger.Debug().String("msg", "Last master Advertisement dequeued").String("dequeuedAt", n.lastMasterAdvertTime.Format(time.StampMilli)).Log()
 			}
 			n.becomeMaster()
-		case seesaw.HAShutdown:
+		case HAShutdown:
 			n.becomeShutdown()
 		default:
 			return ltsvlog.Err(fmt.Errorf("runOnce: Can't handle transition from %v to %v", s, newState)).Stack("")
 		}
 
-	case seesaw.HAMaster:
+	case HAMaster:
 		switch newState := n.doMasterTasks(); newState {
-		case seesaw.HAMaster:
+		case HAMaster:
 			// do nothing
-		case seesaw.HABackup:
+		case HABackup:
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "Sent advertisements").Uint64("sentCount", atomic.LoadUint64(&n.sendCount)).Log()
 			}
 			n.becomeBackup()
-		case seesaw.HAShutdown:
+		case HAShutdown:
 			n.becomeShutdown()
 		default:
 			return ltsvlog.Err(fmt.Errorf("runOnce: Can't handle transition from %v to %v", s, newState)).Stack("")
@@ -204,77 +205,77 @@ func (n *Node) runOnce() error {
 
 func (n *Node) becomeMaster() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeMaster").Log()
-	if err := n.engine.HAState(seesaw.HAMaster); err != nil {
+	if err := n.engine.HAState(HAMaster); err != nil {
 		// Ignore for now - reportStatus will notify the engine or die trying.
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
 	go n.sendAdvertisements()
-	n.setState(seesaw.HAMaster)
+	n.setState(HAMaster)
 }
 
 func (n *Node) becomeBackup() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeBackup").Log()
-	if err := n.engine.HAState(seesaw.HABackup); err != nil {
+	if err := n.engine.HAState(HABackup); err != nil {
 		// Ignore for now - reportStatus will notify the engine or die trying.
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
-	n.stopSenderChannel <- seesaw.HABackup
-	n.setState(seesaw.HABackup)
+	n.stopSenderChannel <- HABackup
+	n.setState(HABackup)
 }
 
 func (n *Node) becomeShutdown() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeShutdown").Log()
-	if err := n.engine.HAState(seesaw.HAShutdown); err != nil {
+	if err := n.engine.HAState(HAShutdown); err != nil {
 		// Ignore for now - reportStatus will notify the engine or die trying.
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
-	if n.state() == seesaw.HAMaster {
-		n.stopSenderChannel <- seesaw.HAShutdown
+	if n.state() == HAMaster {
+		n.stopSenderChannel <- HAShutdown
 		// Sleep for a moment so sendAdvertisements() has a chance to send the shutdown advertisment.
 		time.Sleep(500 * time.Millisecond)
 	}
-	n.setState(seesaw.HAShutdown)
+	n.setState(HAShutdown)
 }
 
-func (n *Node) doMasterTasks() seesaw.HAState {
+func (n *Node) doMasterTasks() HAState {
 	select {
 	case advert := <-n.recvChannel:
 		if advert.VersionType != vrrpVersionType {
 			// Ignore
-			return seesaw.HAMaster
+			return HAMaster
 		}
 		if advert.VRID != n.VRID {
 			ltsvlog.Logger.Info().String("msg", "doMasterTasks: ignoring Advertisement").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
-			return seesaw.HAMaster
+			return HAMaster
 		}
 		if advert.Priority == n.Priority {
 			// TODO(angusc): RFC 5798 says we should compare IP addresses at this point.
 			ltsvlog.Logger.Info().String("msg", "doMasterTasks: ignoring Advertisement with my priority").Uint8("peerPriority", advert.Priority).Log()
-			return seesaw.HAMaster
+			return HAMaster
 		}
 		if advert.Priority > n.Priority {
 			ltsvlog.Logger.Info().String("msg", "doMasterTasks: peer priority > my priority - becoming BACKUP").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
 			n.lastMasterAdvertTime = time.Now()
-			return seesaw.HABackup
+			return HABackup
 		}
 
 	case <-n.shutdownChannel:
-		return seesaw.HAShutdown
+		return HAShutdown
 
 	case err := <-n.errChannel:
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("doMasterTasks: %v", err)
 		}))
-		return seesaw.HAError
+		return HAError
 	}
 	// no change
-	return seesaw.HAMaster
+	return HAMaster
 }
 
-func (n *Node) doBackupTasks() seesaw.HAState {
+func (n *Node) doBackupTasks() HAState {
 	deadline := n.lastMasterAdvertTime.Add(n.masterDownInterval)
 	remaining := deadline.Sub(time.Now())
 	timeout := time.After(remaining)
@@ -283,13 +284,13 @@ func (n *Node) doBackupTasks() seesaw.HAState {
 		return n.backupHandleAdvertisement(advert)
 
 	case <-n.shutdownChannel:
-		return seesaw.HAShutdown
+		return HAShutdown
 
 	case err := <-n.errChannel:
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("doBackupTasks: %v", err)
 		}))
-		return seesaw.HAError
+		return HAError
 
 	case <-timeout:
 		ltsvlog.Logger.Info().String("msg", "doBackupTasks: timed out waiting for Advertisement").Stringer("remaing", remaining).Log()
@@ -299,35 +300,35 @@ func (n *Node) doBackupTasks() seesaw.HAState {
 			return n.backupHandleAdvertisement(advert)
 		default:
 			ltsvlog.Logger.Info().String("msg", "doBackupTasks: becoming MASTER")
-			return seesaw.HAMaster
+			return HAMaster
 		}
 	}
 }
 
-func (n *Node) backupHandleAdvertisement(advert *advertisement) seesaw.HAState {
+func (n *Node) backupHandleAdvertisement(advert *advertisement) HAState {
 	switch {
 	case advert.VersionType != vrrpVersionType:
 		// Ignore
-		return seesaw.HABackup
+		return HABackup
 
 	case advert.VRID != n.VRID:
 		ltsvlog.Logger.Info().String("msg", "backupHandleAdvertisement: ignoring Advertisement").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
-		return seesaw.HABackup
+		return HABackup
 
 	case advert.Priority == 0:
 		ltsvlog.Logger.Info().String("msg", "backupHandleAdvertisement: peer priority is 0 - becoming MASTER")
-		return seesaw.HAMaster
+		return HAMaster
 
 	case n.Preempt && advert.Priority < n.Priority:
 		ltsvlog.Logger.Info().String("msg", "backupHandleAdvertisement: peer priority < my priority - becoming MASTER").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
-		return seesaw.HAMaster
+		return HAMaster
 	}
 
 	// Per RFC 5798, set the masterDownInterval based on the advert interval received from the
 	// current master.  AdvertInt is in centiseconds.
 	n.resetMasterDownInterval(time.Millisecond * time.Duration(10*advert.AdvertInt))
 	n.lastMasterAdvertTime = time.Now()
-	return seesaw.HABackup
+	return HABackup
 }
 
 func (n *Node) queueAdvertisement(advert *advertisement) {
@@ -365,7 +366,7 @@ func (n *Node) sendAdvertisements() {
 
 		case newState := <-n.stopSenderChannel:
 			ticker.Stop()
-			if newState == seesaw.HAShutdown {
+			if newState == HAShutdown {
 				advert := n.newAdvertisement()
 				advert.Priority = 0
 				if err := n.conn.send(advert, time.Second); err != nil {
@@ -414,7 +415,7 @@ func (n *Node) reportStatus() {
 			}
 			time.Sleep(n.StatusReportRetryDelay)
 		}
-		if failover && n.state() == seesaw.HAMaster {
+		if failover && n.state() == HAMaster {
 			ltsvlog.Logger.Info().String("msg", "Received failover request, initiating shutdown...").Log()
 			n.Shutdown()
 		}
@@ -424,7 +425,7 @@ func (n *Node) reportStatus() {
 func (n *Node) checkConfig() {
 	for _ = range time.Tick(n.ConfigCheckInterval) {
 		failures := 0
-		var cfg *seesaw.HAConfig
+		var cfg *HAConfig
 		var err error
 		for cfg, err = n.engine.HAConfig(); err != nil; {
 			failures++
@@ -442,4 +443,22 @@ func (n *Node) checkConfig() {
 			n.errChannel <- ltsvlog.Err(fmt.Errorf("checkConfig: HAConfig has changed")).Stack("")
 		}
 	}
+}
+
+// Shutdowner is an interface for a server that can be shutdown.
+type Shutdowner interface {
+	Shutdown()
+}
+
+// ShutdownHandler configures signal handling and initiates a shutdown if a
+// SIGINT, SIGQUIT or SIGTERM is received by the process.
+func ShutdownHandler(server Shutdowner) {
+	sigc := make(chan os.Signal, 3)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	go func() {
+		for s := range sigc {
+			ltsvlog.Logger.Info().String("msg", "Received signal, initiating shutdown...").Stringer("signal", s).Log()
+			server.Shutdown()
+		}
+	}()
 }

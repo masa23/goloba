@@ -25,16 +25,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/seesaw/common/seesaw"
-	"github.com/google/seesaw/common/server"
 	"github.com/hnakamur/ltsvlog"
 	"github.com/masa23/keepalivego/vrrp"
 )
 
 var (
-	engineSocket = flag.String("engine", seesaw.EngineSocket,
-		"Seesaw Engine Socket")
-
 	configCheckInterval = flag.Duration("config_check_interval", 15*time.Second,
 		"How frequently to poll the engine for HAConfig changes")
 
@@ -63,30 +58,27 @@ var (
 		"Time between status report retries")
 
 	testLocalAddr = flag.String("local_addr", "",
-		"Local IP Address - used only when test_mode=true")
+		"Local IP Address")
 
 	testVIP = flag.String("vip", "",
-		"Virtual IP Address - used only when test_mode=true")
+		"Virtual IP Address")
 
 	testVIPDev = flag.String("vip_dev", "",
-		"Virtual IP network interface - used only when test_mode=true")
-
-	testMode = flag.Bool("test_mode", false,
-		"Use command line flags for configuration rather than the engine")
+		"Virtual IP network interface")
 
 	testPriority = flag.Int("priority", 100,
-		"Priority - used only when test_mode=true")
+		"Priority")
 
 	testRemoteAddr = flag.String("remote_addr", "224.0.0.18",
-		"Remote IP Address - used only when test_mode=true")
+		"Remote IP Address")
 
 	testVRID = flag.Int("vrid", 100,
-		"VRID - used only when test_mode=true")
+		"VRID")
 )
 
 // config reads the HAConfig from the engine. It does not return until it
 // successfully retrieves an HAConfig that has HA peering enabled.
-func config(e vrrp.Engine) *seesaw.HAConfig {
+func config(e vrrp.Engine) *vrrp.HAConfig {
 	for {
 		c, err := e.HAConfig()
 		switch {
@@ -106,39 +98,28 @@ func config(e vrrp.Engine) *seesaw.HAConfig {
 }
 
 func engine() vrrp.Engine {
-	if *testMode {
-		ltsvlog.Logger.Info().String("msg", "Using command-line flags for config").Log()
-		//config := seesaw.HAConfig{
-		//	Enabled:    true,
-		//	LocalAddr:  net.ParseIP(*testLocalAddr),
-		//	RemoteAddr: net.ParseIP(*testRemoteAddr),
-		//	Priority:   uint8(*testPriority),
-		//	VRID:       uint8(*testVRID),
-		//}
-		//return &vrrp.DummyEngine{Config: &config}
-		vip, vipNet, err := net.ParseCIDR(*testVIP)
-		if err != nil {
-			log.Fatal(err)
-		}
-		vipDev, err := net.InterfaceByName(*testVIPDev)
-		if err != nil {
-			log.Fatal(err)
-		}
-		config := vrrp.VIPHAConfig{
-			HAConfig: seesaw.HAConfig{
-				Enabled:    true,
-				LocalAddr:  net.ParseIP(*testLocalAddr),
-				RemoteAddr: net.ParseIP(*testRemoteAddr),
-				Priority:   uint8(*testPriority),
-				VRID:       uint8(*testVRID),
-			},
-			VIP:          vip,
-			VIPNet:       vipNet,
-			VIPInterface: vipDev,
-		}
-		return &vrrp.VIPUpdateEngine{Config: &config}
+	ltsvlog.Logger.Info().String("msg", "Using command-line flags for config").Log()
+	vip, vipNet, err := net.ParseCIDR(*testVIP)
+	if err != nil {
+		log.Fatal(err)
 	}
-	return &vrrp.EngineClient{Socket: *engineSocket}
+	vipDev, err := net.InterfaceByName(*testVIPDev)
+	if err != nil {
+		log.Fatal(err)
+	}
+	config := vrrp.VIPHAConfig{
+		HAConfig: vrrp.HAConfig{
+			Enabled:    true,
+			LocalAddr:  net.ParseIP(*testLocalAddr),
+			RemoteAddr: net.ParseIP(*testRemoteAddr),
+			Priority:   uint8(*testPriority),
+			VRID:       uint8(*testVRID),
+		},
+		VIP:          vip,
+		VIPNet:       vipNet,
+		VIPInterface: vipDev,
+	}
+	return &vrrp.VIPUpdateEngine{Config: &config}
 }
 
 func main() {
@@ -165,7 +146,7 @@ func main() {
 		StatusReportRetryDelay:  *statusReportRetryDelay,
 	}
 	n := vrrp.NewNode(nc, conn, engine)
-	server.ShutdownHandler(n)
+	vrrp.ShutdownHandler(n)
 
 	if err = n.Run(); err != nil {
 		ltsvlog.Logger.Err(err)
