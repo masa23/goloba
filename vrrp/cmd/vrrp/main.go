@@ -23,8 +23,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/google/seesaw/common/seesaw"
@@ -148,15 +146,6 @@ func main() {
 
 	ltsvlog.Logger.Info().String("msg", "Starting up")
 	engine := engine()
-
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGKILL)
-	go func() {
-		s := <-c
-		ltsvlog.Logger.Info().String("msg", "Got signal").Stringer("signal", s).Log()
-		engine.HAState(seesaw.HAShutdown)
-	}()
-
 	config := config(engine)
 	ltsvlog.Logger.Info().String("msg", "Received HAConfig").Sprintf("haConfig", "%v", config).Log()
 	conn, err := vrrp.NewIPHAConn(config.LocalAddr, config.RemoteAddr)
