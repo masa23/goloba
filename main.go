@@ -140,7 +140,7 @@ func ConfigReload(ipvs libipvs.IPVSHandle) {
 			AddressFamily: syscall.AF_INET,
 			Protocol:      libipvs.Protocol(syscall.IPPROTO_TCP),
 			Port:          serviceConf.Port,
-			SchedName:     libipvs.RoundRobin,
+			SchedName:     serviceConf.Schedule,
 		}
 		if !exist {
 			if err := ipvs.NewService(&service); err != nil {
