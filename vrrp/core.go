@@ -13,8 +13,8 @@ import (
 
 // HAConn represents an HA connection for sending and receiving advertisements between two Nodes.
 type HAConn interface {
-	Send(advert *advertisement, timeout time.Duration) error
-	Receive() (*advertisement, error)
+	send(advert *advertisement, timeout time.Duration) error
+	receive() (*advertisement, error)
 }
 
 // advertisement represents a VRRPv3 advertisement packet.  Field names and sizes are per RFC 5798.
@@ -348,7 +348,7 @@ func (n *Node) sendAdvertisements() {
 		// safe.
 		select {
 		case <-ticker.C:
-			if err := n.conn.Send(n.newAdvertisement(), n.MasterAdvertInterval); err != nil {
+			if err := n.conn.send(n.newAdvertisement(), n.MasterAdvertInterval); err != nil {
 				select {
 				case n.errChannel <- err:
 				default:
@@ -368,7 +368,7 @@ func (n *Node) sendAdvertisements() {
 			if newState == seesaw.HAShutdown {
 				advert := n.newAdvertisement()
 				advert.Priority = 0
-				if err := n.conn.Send(advert, time.Second); err != nil {
+				if err := n.conn.send(advert, time.Second); err != nil {
 					ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 						return fmt.Errorf("sendAdvertisements: Failed to send shutdown Advertisement, %v", err)
 					}).Stack(""))
@@ -381,7 +381,7 @@ func (n *Node) sendAdvertisements() {
 
 func (n *Node) receiveAdvertisements() {
 	for {
-		if advert, err := n.conn.Receive(); err != nil {
+		if advert, err := n.conn.receive(); err != nil {
 			select {
 			case n.errChannel <- err:
 			default:
