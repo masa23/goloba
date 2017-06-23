@@ -58,7 +58,7 @@ func InterfaceByIP(ip net.IP) (*net.Interface, error) {
 
 func SendGARP(c *arp.Client, intf *net.Interface, ip net.IP) error {
 	p, err := arp.NewPacket(arp.OperationRequest, intf.HardwareAddr, ip,
-		net.HardwareAddr{0, 0, 0, 0, 0, 0}, ip)
+		net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, ip)
 	if err != nil {
 		return err
 	}
