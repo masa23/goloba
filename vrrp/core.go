@@ -13,12 +13,12 @@ import (
 
 // HAConn represents an HA connection for sending and receiving advertisements between two Nodes.
 type HAConn interface {
-	Send(advert *Advertisement, timeout time.Duration) error
-	Receive() (*Advertisement, error)
+	Send(advert *advertisement, timeout time.Duration) error
+	Receive() (*advertisement, error)
 }
 
-// Advertisement represents a VRRPv3 Advertisement packet.  Field names and sizes are per RFC 5798.
-type Advertisement struct {
+// advertisement represents a VRRPv3 advertisement packet.  Field names and sizes are per RFC 5798.
+type advertisement struct {
 	VersionType  uint8
 	VRID         uint8
 	Priority     uint8
@@ -70,7 +70,7 @@ type Node struct {
 	masterDownInterval   time.Duration
 	lastMasterAdvertTime time.Time
 	errChannel           chan error
-	recvChannel          chan *Advertisement
+	recvChannel          chan *advertisement
 	stopSenderChannel    chan seesaw.HAState
 	shutdownChannel      chan bool
 }
@@ -83,7 +83,7 @@ func NewNode(cfg NodeConfig, conn HAConn, engine Engine) *Node {
 		engine:               engine,
 		lastMasterAdvertTime: time.Now(),
 		errChannel:           make(chan error),
-		recvChannel:          make(chan *Advertisement, 20),
+		recvChannel:          make(chan *advertisement, 20),
 		stopSenderChannel:    make(chan seesaw.HAState),
 		shutdownChannel:      make(chan bool),
 	}
@@ -133,8 +133,8 @@ func (n *Node) status() seesaw.HAStatus {
 }
 
 // newAdvertisement creates a new Advertisement with this Node's VRID and priority.
-func (n *Node) newAdvertisement() *Advertisement {
-	return &Advertisement{
+func (n *Node) newAdvertisement() *advertisement {
+	return &advertisement{
 		VersionType: vrrpVersionType,
 		VRID:        n.VRID,
 		Priority:    n.Priority,
@@ -304,7 +304,7 @@ func (n *Node) doBackupTasks() seesaw.HAState {
 	}
 }
 
-func (n *Node) backupHandleAdvertisement(advert *Advertisement) seesaw.HAState {
+func (n *Node) backupHandleAdvertisement(advert *advertisement) seesaw.HAState {
 	switch {
 	case advert.VersionType != vrrpVersionType:
 		// Ignore
@@ -330,7 +330,7 @@ func (n *Node) backupHandleAdvertisement(advert *Advertisement) seesaw.HAState {
 	return seesaw.HABackup
 }
 
-func (n *Node) queueAdvertisement(advert *Advertisement) {
+func (n *Node) queueAdvertisement(advert *advertisement) {
 	if queueLen := len(n.recvChannel); queueLen > 0 {
 		ltsvlog.Logger.Info().String("msg", "queueAdvertisement: advertisements already queued").Int("queueLen", queueLen).Log()
 	}

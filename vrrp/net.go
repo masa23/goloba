@@ -239,7 +239,7 @@ func (c *IPHAConn) af() int {
 // Receive reads an IP packet from the IP layer and translates it into an advertisement.
 // receive blocks until either an advertisement is received or an error occurs.  If the
 // error is a recoverable/ignorable error, receive will return (nil, nil).
-func (c *IPHAConn) Receive() (*Advertisement, error) {
+func (c *IPHAConn) Receive() (*advertisement, error) {
 	p, err := c.readPacket()
 	if err != nil {
 		switch err := err.(type) {
@@ -261,7 +261,7 @@ func (c *IPHAConn) Receive() (*Advertisement, error) {
 		return nil, nil
 	}
 
-	advert := &Advertisement{}
+	advert := &advertisement{}
 	reader := bytes.NewReader(p.payload)
 	if err := binary.Read(reader, binary.BigEndian, advert); err != nil {
 		return nil, err
@@ -400,7 +400,7 @@ func (c *IPHAConn) readIPv6Packet() (*packet, error) {
 }
 
 // Send translates an advertisement into a []byte and passes it to the IP layer for delivery.
-func (c *IPHAConn) Send(advert *Advertisement, timeout time.Duration) error {
+func (c *IPHAConn) Send(advert *advertisement, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	if err := c.sendConn.SetWriteDeadline(deadline); err != nil {
 		return err
@@ -426,7 +426,7 @@ func (c *IPHAConn) Send(advert *Advertisement, timeout time.Duration) error {
 	return nil
 }
 
-func checksum(advert *Advertisement, srcIP, dstIP net.IP) (uint16, error) {
+func checksum(advert *advertisement, srcIP, dstIP net.IP) (uint16, error) {
 	buf := new(bytes.Buffer)
 	if src, dst := srcIP.To4(), dstIP.To4(); src != nil && dst != nil {
 		// IPv4
