@@ -185,15 +185,6 @@ func (e *VIPUpdateEngine) HAState(state seesaw.HAState) error {
 }
 
 func sendGARPLoop(ctx context.Context, vip net.IP) {
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		ltsvlog.Logger.Info().String("msg", "exiting sendGARPLoop before sending a GARP").Stringer("vip", vip).Log()
-		return
-	case <-timer.C:
-	}
-
 	intf, err := InterfaceByIP(vip)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
