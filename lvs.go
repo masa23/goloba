@@ -16,17 +16,17 @@ type LVS struct {
 type Config struct {
 	LogFile        string       "yaml:`logfile`"
 	EnableDebugLog bool         "yaml:`enable_debug_log`"
-	Vrrp           []ConfigVrrp "yaml:`vrrp`"
-	Lvs            []ConfigLvs  "yaml:`lvs`"
+	VRRP           []ConfigVRRP "yaml:`vrrp`"
+	LVS            []ConfigLVS  "yaml:`lvs`"
 }
 
-type ConfigVrrp struct {
-	Vrid     int    "yaml:`vrid`"
+type ConfigVRRP struct {
+	VRID     int    "yaml:`vrid`"
 	Priority int    "yaml:`priority`"
 	Address  string "yaml:`address`"
 }
 
-type ConfigLvs struct {
+type ConfigLVS struct {
 	Name     string         "yaml:`name`"
 	Port     uint16         "yaml:`port`"
 	Address  string         "yaml:`address`"
@@ -62,9 +62,9 @@ func (l *LVS) ReloadConfig(config *Config) error {
 
 	// 不要な設定を削除
 	for _, ipvsService := range ipvsServices {
-		var serviceConf ConfigLvs
+		var serviceConf ConfigLVS
 		exist := false
-		for _, serviceConf := range config.Lvs {
+		for _, serviceConf := range config.LVS {
 			if ipvsService.Address.Equal(net.ParseIP(serviceConf.Address)) {
 				exist = true
 				break
@@ -106,7 +106,7 @@ func (l *LVS) ReloadConfig(config *Config) error {
 	}
 
 	// 設定追加 更新
-	for _, serviceConf := range config.Lvs {
+	for _, serviceConf := range config.LVS {
 		ipAddr := net.ParseIP(serviceConf.Address)
 		var ipvsService *libipvs.Service
 		exist := false
