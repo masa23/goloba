@@ -1,2 +1,3 @@
 daemon.log
+cmd/keepalivego/keepalivego
 vrrp/cmd/vrrp/vrrp
