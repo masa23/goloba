@@ -107,17 +107,19 @@ func (l *LVS) ReloadConfig(config *Config) error {
 
 	// 設定追加 更新
 	for _, serviceConf := range config.Lvs {
+		ipAddr := net.ParseIP(serviceConf.Address)
 		var ipvsService *libipvs.Service
 		exist := false
 		for _, ipvsService = range ipvsServices {
-			if ipvsService.Address.Equal(net.ParseIP(serviceConf.Address)) {
+			if ipvsService.Address.Equal(ipAddr) {
 				exist = true
 				break
 			}
 		}
+		family := libipvs.AddressFamily(ipAddressFamily(ipAddr))
 		service := libipvs.Service{
-			Address:       net.ParseIP(serviceConf.Address),
-			AddressFamily: syscall.AF_INET,
+			Address:       ipAddr,
+			AddressFamily: family,
 			Protocol:      libipvs.Protocol(syscall.IPPROTO_TCP),
 			Port:          serviceConf.Port,
 			SchedName:     serviceConf.Schedule,
@@ -149,25 +151,27 @@ func (l *LVS) ReloadConfig(config *Config) error {
 		}
 
 		for _, server := range serviceConf.Servers {
+			ipAddr := net.ParseIP(server.Address)
 			exist = false
 			for _, ipvsDest := range ipvsDests {
-				if ipvsDest.Address.Equal(net.ParseIP(server.Address)) {
+				if ipvsDest.Address.Equal(ipAddr) {
 					exist = true
 					break
 				}
 			}
 			var fwd libipvs.FwdMethod
 			switch serviceConf.Type {
-			case "nat":
-				fwd = libipvs.IP_VS_CONN_F_MASQ
 			case "dr":
 				fwd = libipvs.IP_VS_CONN_F_DROUTE
+			case "nat":
+				fallthrough
 			default:
 				fwd = libipvs.IP_VS_CONN_F_MASQ
 			}
+			family := libipvs.AddressFamily(ipAddressFamily(ipAddr))
 			dest := libipvs.Destination{
-				Address:       net.ParseIP(server.Address),
-				AddressFamily: syscall.AF_INET,
+				Address:       ipAddr,
+				AddressFamily: family,
 				Port:          server.Port,
 				FwdMethod:     fwd,
 				Weight:        server.Weight,
@@ -196,4 +200,12 @@ func (l *LVS) ReloadConfig(config *Config) error {
 		}
 	}
 	return nil
+}
+
+func ipAddressFamily(ip net.IP) int {
+	if ip.To4() != nil {
+		return syscall.AF_INET
+	} else {
+		return syscall.AF_INET6
+	}
 }
