@@ -46,6 +46,10 @@ func main() {
 
 	ltsvlog.Logger.Info().String("msg", "Start keepalivego!").Log()
 
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().Sprintf("config", "%+v", conf).Log()
+	}
+
 	lvs, err := keepalivego.New()
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {

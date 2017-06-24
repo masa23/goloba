@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"syscall"
+	"time"
 
 	"github.com/hnakamur/ltsvlog"
 	"github.com/mqliang/libipvs"
@@ -14,31 +15,41 @@ type LVS struct {
 }
 
 type Config struct {
-	LogFile        string       "yaml:`logfile`"
-	EnableDebugLog bool         "yaml:`enable_debug_log`"
-	VRRP           []ConfigVRRP "yaml:`vrrp`"
-	LVS            []ConfigLVS  "yaml:`lvs`"
+	LogFile        string              `yaml:"logfile"`
+	EnableDebugLog bool                `yaml:"enable_debug_log"`
+	VRRP           []ConfigVRRP        `yaml:"vrrp"`
+	LVS            []ConfigLVS         `yaml:"lvs"`
+	HealthChecks   []ConfigHealthCheck `yaml:"health_check"`
 }
 
 type ConfigVRRP struct {
-	VRID     int    "yaml:`vrid`"
-	Priority int    "yaml:`priority`"
-	Address  string "yaml:`address`"
+	VRID     int    `yaml:"vrid"`
+	Priority int    `yaml:"priority"`
+	Address  string `yaml:"address"`
 }
 
 type ConfigLVS struct {
-	Name     string         "yaml:`name`"
-	Port     uint16         "yaml:`port`"
-	Address  string         "yaml:`address`"
-	Schedule string         "yaml:`schedule`"
-	Type     string         "yaml:`type`"
-	Servers  []ConfigServer "yaml:`servers`"
+	Name     string         `yaml:"name"`
+	Port     uint16         `yaml:"port"`
+	Address  string         `yaml:"address"`
+	Schedule string         `yaml:"schedule"`
+	Type     string         `yaml:"type"`
+	Servers  []ConfigServer `yaml:"servers"`
 }
 
 type ConfigServer struct {
-	Port    uint16 "yaml:`port`"
-	Address string "yaml:`address`"
-	Weight  uint32 "yaml:`weight`"
+	Port    uint16 `yaml:"port"`
+	Address string `yaml:"address"`
+	Weight  uint32 `yaml:"weight"`
+}
+
+type ConfigHealthCheck struct {
+	Address    string        `yaml:"address"`
+	URL        string        `yaml:"url"`
+	HostHeader string        `yaml:"host_header"`
+	OKStatus   int           `yaml:"ok_status"`
+	Timeout    time.Duration `yaml:"timeout"`
+	Interval   time.Duration `yaml:"interval"`
 }
 
 func New() (*LVS, error) {
@@ -64,7 +75,7 @@ func (l *LVS) ReloadConfig(config *Config) error {
 	for _, ipvsService := range ipvsServices {
 		var serviceConf ConfigLVS
 		exist := false
-		for _, serviceConf := range config.LVS {
+		for _, serviceConf = range config.LVS {
 			if ipvsService.Address.Equal(net.ParseIP(serviceConf.Address)) {
 				exist = true
 				break
