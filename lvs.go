@@ -241,18 +241,19 @@ func ipAddressFamily(ip net.IP) int {
 
 func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	l.checkResultC = make(chan healthcheck.CheckResult, len(config.HealthChecks))
 	l.checkers = healthcheck.NewCheckers()
 	l.doUpdateCheckers(ctx, config)
+	l.mu.Unlock()
 
 	for {
 		select {
 		case r := <-l.checkResultC:
+			l.mu.Lock()
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", r).Log()
 			}
+			l.mu.Unlock()
 		case <-ctx.Done():
 			return
 		}
