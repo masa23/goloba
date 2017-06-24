@@ -12,27 +12,34 @@ import (
 	"github.com/masa23/keepalivego"
 )
 
-const (
-	ConfigFile = "./config.yml"
-)
-
 func main() {
 	var configfile string
-
-	flag.StringVar(&configfile, "config", ConfigFile, "Config File")
+	flag.StringVar(&configfile, "config", "config.yml", "Config File")
 	flag.Parse()
 
 	buf, err := ioutil.ReadFile(configfile)
 	if err != nil {
-		panic(err)
+		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to read config file, err=%v", err)
+		}).String("configFile", configfile).Stack(""))
+		os.Exit(1)
 	}
 	var conf keepalivego.Config
 	err = yaml.Unmarshal(buf, &conf)
+	if err != nil {
+		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to parse config file, err=%v", err)
+		}).String("configFile", configfile).Stack(""))
+		os.Exit(1)
+	}
 
 	// ログ
 	logFile, err := os.OpenFile(conf.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		panic(err)
+		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to open log file to write, err=%v", err)
+		}).String("logFile", conf.LogFile).Stack(""))
+		os.Exit(1)
 	}
 	defer logFile.Close()
 	ltsvlog.Logger = ltsvlog.NewLTSVLogger(logFile, conf.EnableDebugLog)
@@ -44,6 +51,7 @@ func main() {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to create LVS, err=%v", err)
 		}))
+		os.Exit(1)
 	}
 
 	err = lvs.ReloadConfig(&conf)
@@ -51,5 +59,6 @@ func main() {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to reload LVS config, err=%v", err)
 		}))
+		os.Exit(1)
 	}
 }
