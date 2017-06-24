@@ -1,17 +1,24 @@
 package keepalivego
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/hnakamur/ltsvlog"
+	"github.com/masa23/keepalivego/healthcheck"
 	"github.com/mqliang/libipvs"
 )
 
 type LVS struct {
-	ipvs libipvs.IPVSHandle
+	ipvs         libipvs.IPVSHandle
+	mu           sync.Mutex
+	checkers     *healthcheck.Checkers
+	checkResultC chan healthcheck.CheckResult
 }
 
 type Config struct {
@@ -60,10 +67,16 @@ func New() (*LVS, error) {
 		}).Stack("")
 	}
 
-	return &LVS{ipvs: ipvs}, nil
+	return &LVS{
+		ipvs:     ipvs,
+		checkers: healthcheck.NewCheckers(),
+	}, nil
 }
 
-func (l *LVS) ReloadConfig(config *Config) error {
+func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	ipvsServices, err := l.ipvs.ListServices()
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
@@ -210,6 +223,11 @@ func (l *LVS) ReloadConfig(config *Config) error {
 			}
 		}
 	}
+
+	if l.checkers != nil {
+		l.doUpdateCheckers(ctx, config)
+	}
+
 	return nil
 }
 
@@ -218,5 +236,42 @@ func ipAddressFamily(ip net.IP) int {
 		return syscall.AF_INET
 	} else {
 		return syscall.AF_INET6
+	}
+}
+
+func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.checkResultC = make(chan healthcheck.CheckResult, len(config.HealthChecks))
+	l.checkers = healthcheck.NewCheckers()
+	l.doUpdateCheckers(ctx, config)
+
+	for {
+		select {
+		case r := <-l.checkResultC:
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", r).Log()
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
+	for _, c := range config.HealthChecks {
+		cfg := &healthcheck.Config{
+			ServerAddress: c.Address,
+			Method:        http.MethodGet,
+			URL:           c.URL,
+			HostHeader:    c.HostHeader,
+			IsOK: func(res *http.Response) (bool, error) {
+				return res.StatusCode == c.OKStatus, nil
+			},
+			Timeout:  c.Timeout,
+			Interval: c.Interval,
+		}
+		l.checkers.AddAndStartChecker(ctx, cfg, l.checkResultC)
 	}
 }
