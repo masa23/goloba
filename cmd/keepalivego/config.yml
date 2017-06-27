@@ -1,5 +1,5 @@
 logfile: ./daemon.log
-enable_debug_log: true
+enable_debug_log: False
 vrrp:
 - vrid: 200
   priority: 100
@@ -9,26 +9,52 @@ vrrp:
   address: 10.0.255.101
 lvs:
 - name: http
-  address: 10.0.255.100
+  address:  192.168.122.2
   port: 80
   schedule: wrr
   type: dr
   servers:
-    - address: 10.0.255.101
+    - address: 192.168.122.62
       port: 80
       weight: 100
-    - address: 10.0.255.102
+      health_check:
+        url: http://192.168.122.62
+        host_header: ""
+        ok_status: 200
+        timeout: 900ms
+        interval: 1000ms
+    - address: 192.168.122.240
       port: 80
-      weight: 200
+      weight: 500
+      health_check:
+        url: http://192.168.122.240
+        host_header: ""
+        ok_status: 200
+        timeout: 900ms
+        interval: 1000ms
 - name: https
-  address: 10.0.255.101
+  address:  192.168.122.2
   port: 443
   schedule: wrr
   type: nat
   servers:
-    - address: 10.0.255.101
+    - address: 192.168.122.62
       port: 443
       weight: 10
-    - address: 10.0.255.102
+      health_check:
+        url: https://192.168.122.62
+        skip_verify_cert: True
+        host_header: ""
+        ok_status: 200
+        timeout: 900ms
+        interval: 1000ms
+    - address: 192.168.122.240
       port: 443
       weight: 20
+      health_check:
+        url: https://192.168.122.240
+        skip_verify_cert: True
+        host_header: ""
+        ok_status: 200
+        timeout: 900ms
+        interval: 1000ms
