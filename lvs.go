@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -15,18 +16,18 @@ import (
 )
 
 type LVS struct {
-	ipvs         libipvs.IPVSHandle
-	mu           sync.Mutex
-	checkers     *healthcheck.Checkers
-	checkResultC chan healthcheck.CheckResult
+	ipvs             libipvs.IPVSHandle
+	mu               sync.Mutex
+	servicesAndDests *ServicesAndDests
+	checkers         *healthcheck.Checkers
+	checkResultC     chan healthcheck.CheckResult
 }
 
 type Config struct {
-	LogFile        string              `yaml:"logfile"`
-	EnableDebugLog bool                `yaml:"enable_debug_log"`
-	VRRP           []ConfigVRRP        `yaml:"vrrp"`
-	LVS            []ConfigLVS         `yaml:"lvs"`
-	HealthChecks   []ConfigHealthCheck `yaml:"health_check"`
+	LogFile        string       `yaml:"logfile"`
+	EnableDebugLog bool         `yaml:"enable_debug_log"`
+	VRRP           []ConfigVRRP `yaml:"vrrp"`
+	LVS            []ConfigLVS  `yaml:"lvs"`
 }
 
 type ConfigVRRP struct {
@@ -45,18 +46,97 @@ type ConfigLVS struct {
 }
 
 type ConfigServer struct {
-	Port    uint16 `yaml:"port"`
-	Address string `yaml:"address"`
-	Weight  uint32 `yaml:"weight"`
+	Port        uint16            `yaml:"port"`
+	Address     string            `yaml:"address"`
+	Weight      uint32            `yaml:"weight"`
+	HealthCheck ConfigHealthCheck `yaml:"health_check"`
 }
 
 type ConfigHealthCheck struct {
-	Address    string        `yaml:"address"`
-	URL        string        `yaml:"url"`
-	HostHeader string        `yaml:"host_header"`
-	OKStatus   int           `yaml:"ok_status"`
-	Timeout    time.Duration `yaml:"timeout"`
-	Interval   time.Duration `yaml:"interval"`
+	URL            string        `yaml:"url"`
+	HostHeader     string        `yaml:"host_header"`
+	SkipVerifyCert bool          `yaml:"skip_verify_cert"`
+	OKStatus       int           `yaml:"ok_status"`
+	Timeout        time.Duration `yaml:"timeout"`
+	Interval       time.Duration `yaml:"interval"`
+}
+
+type ServicesAndDests struct {
+	services map[string]*ServiceAndDests
+}
+
+type ServiceAndDests struct {
+	service      *libipvs.Service
+	destinations map[string]*Destination
+}
+
+type Destination struct {
+	destination *libipvs.Destination
+}
+
+func (s *ServicesAndDests) findDestination(address string, port uint16) (*libipvs.Service, *libipvs.Destination) {
+	ip := net.ParseIP(address)
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "findDestination").String("address", address).Uint16("port", port).Stringer("ip", ip).Log()
+	}
+
+	for _, service := range s.services {
+		for _, dest := range service.destinations {
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "findDestination").Stringer("destAddress", dest.destination.Address).Uint16("destPort", dest.destination.Port).Log()
+			}
+			if dest.destination.Address.Equal(ip) && dest.destination.Port == port {
+				return service.service, dest.destination
+			}
+		}
+	}
+	return nil, nil
+}
+
+func joinIPAndPort(ip net.IP, port uint16) string {
+	return net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))
+}
+
+func listServicesAndDests(h libipvs.IPVSHandle) (*ServicesAndDests, error) {
+	servicesAndDests := &ServicesAndDests{
+		services: make(map[string]*ServiceAndDests),
+	}
+
+	services, err := h.ListServices()
+	if err != nil {
+		return nil, ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to list ipvs services, err=%v", err)
+		}).Stack("")
+	}
+	for _, service := range services {
+		serviceAndDests := &ServiceAndDests{
+			service:      service,
+			destinations: make(map[string]*Destination),
+		}
+		serviceKey := joinIPAndPort(service.Address, service.Port)
+		servicesAndDests.services[serviceKey] = serviceAndDests
+
+		dests, err := h.ListDestinations(service)
+		if err != nil {
+			return nil, ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to list ipvs destinations, err=%v", err)
+			}).Stringer("serviceAddress", service.Address).Stack("")
+		}
+
+		for _, dest := range dests {
+			destKey := joinIPAndPort(dest.Address, dest.Port)
+			serviceAndDests.destinations[destKey] = &Destination{destination: dest}
+		}
+	}
+	return servicesAndDests, nil
+}
+
+func (c *Config) TotalServerCount() int {
+	cnt := 0
+	for _, lvs := range c.LVS {
+		cnt += len(lvs.Servers)
+	}
+	return cnt
 }
 
 func New() (*LVS, error) {
@@ -204,7 +284,7 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 				err := l.ipvs.UpdateDestination(ipvsService, &dest)
 				if err != nil {
 					return ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("faild create ipvs destination, err=%s", err)
+						return fmt.Errorf("faild update ipvs destination, err=%s", err)
 					}).String("address", server.Address).
 						Uint16("port", server.Port).
 						String("fwdMethod", serviceConf.Type).
@@ -224,6 +304,17 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 		}
 	}
 
+	servicesAndDests, err := listServicesAndDests(l.ipvs)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to load ipvs services and destinations, err=%v", err)
+		})
+	}
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "lvs.New").Sprintf("servicesAndDests", "%+v", servicesAndDests).Log()
+	}
+	l.servicesAndDests = servicesAndDests
+
 	if l.checkers != nil {
 		l.doUpdateCheckers(ctx, config)
 	}
@@ -239,9 +330,20 @@ func ipAddressFamily(ip net.IP) int {
 	}
 }
 
+func findConfigServer(config *Config, address string, port uint16) *ConfigServer {
+	for _, lvs := range config.LVS {
+		for _, server := range lvs.Servers {
+			if server.Address == address && server.Port == port {
+				return &server
+			}
+		}
+	}
+	return nil
+}
+
 func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
-	l.checkResultC = make(chan healthcheck.CheckResult, len(config.HealthChecks))
+	l.checkResultC = make(chan healthcheck.CheckResult, config.TotalServerCount())
 	l.checkers = healthcheck.NewCheckers()
 	l.doUpdateCheckers(ctx, config)
 	l.mu.Unlock()
@@ -251,7 +353,52 @@ func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 		case r := <-l.checkResultC:
 			l.mu.Lock()
 			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", r).Log()
+				ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", r).Sprintf("resultType", "%T", r).Uint16("resultPort", r.Port).Log()
+			}
+
+			service, destination := l.servicesAndDests.findDestination(r.ServerAddress, r.Port)
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "after findDestination").Sprintf("service", "%+v", service).Sprintf("destination", "%+v", destination).Log()
+			}
+			if r.OK && r.Err == nil {
+				c := findConfigServer(config, r.ServerAddress, r.Port)
+				if c != nil && destination.Weight != c.Weight {
+					destination.Weight = c.Weight
+					err := l.ipvs.UpdateDestination(service, destination)
+					if err != nil {
+						l.mu.Unlock()
+						ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+							return fmt.Errorf("faild to attach ipvs destination, err=%s", err)
+						}).Stringer("address", destination.Address).
+							Uint16("port", destination.Port).
+							Stringer("fwdMethod", destination.FwdMethod).
+							Uint32("weight", destination.Weight).Stack(""))
+					}
+					ltsvlog.Logger.Info().String("msg", "attached destination").
+						Stringer("address", destination.Address).
+						Uint16("port", destination.Port).
+						Stringer("fwdMethod", destination.FwdMethod).
+						Uint32("weight", destination.Weight).Log()
+				}
+			} else {
+				if destination.Weight != 0 {
+					destination.Weight = 0
+					err := l.ipvs.UpdateDestination(service, destination)
+					if err != nil {
+						l.mu.Unlock()
+						ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+							return fmt.Errorf("faild to detach ipvs destination, err=%s", err)
+						}).Stringer("address", destination.Address).
+							Uint16("port", destination.Port).
+							Stringer("fwdMethod", destination.FwdMethod).
+							Uint32("weight", destination.Weight).Stack(""))
+					}
+					ltsvlog.Logger.Info().String("msg", "detached destination").
+						Stringer("address", destination.Address).
+						Uint16("port", destination.Port).
+						Stringer("fwdMethod", destination.FwdMethod).
+						Uint32("weight", destination.Weight).Log()
+				}
 			}
 			l.mu.Unlock()
 		case <-ctx.Done():
@@ -261,18 +408,29 @@ func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 }
 
 func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
-	for _, c := range config.HealthChecks {
-		cfg := &healthcheck.Config{
-			ServerAddress: c.Address,
-			Method:        http.MethodGet,
-			URL:           c.URL,
-			HostHeader:    c.HostHeader,
-			IsOK: func(res *http.Response) (bool, error) {
-				return res.StatusCode == c.OKStatus, nil
-			},
-			Timeout:  c.Timeout,
-			Interval: c.Interval,
+	for _, lvs := range config.LVS {
+		for _, server := range lvs.Servers {
+			c := server.HealthCheck
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", server.Address).Uint16("serverPort", server.Port).Log()
+			}
+			cfg := &healthcheck.Config{
+				ServerAddress:  server.Address,
+				Port:           server.Port,
+				Method:         http.MethodGet,
+				URL:            c.URL,
+				HostHeader:     c.HostHeader,
+				SkipVerifyCert: c.SkipVerifyCert,
+				IsOK: func(res *http.Response) (bool, error) {
+					if res.StatusCode != c.OKStatus {
+						ltsvlog.Logger.Info().String("msg", "healthcheck status unmatch").Int("status", res.StatusCode).Int("okStatus", c.OKStatus).Log()
+					}
+					return res.StatusCode == c.OKStatus, nil
+				},
+				Timeout:  c.Timeout,
+				Interval: c.Interval,
+			}
+			l.checkers.AddAndStartChecker(ctx, cfg, l.checkResultC)
 		}
-		l.checkers.AddAndStartChecker(ctx, cfg, l.checkResultC)
 	}
 }
