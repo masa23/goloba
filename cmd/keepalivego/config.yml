@@ -1,12 +1,15 @@
 logfile: ./daemon.log
 enable_debug_log: False
 vrrp:
-- vrid: 200
+  enabled: True
+  vrid: 200
   priority: 100
-  address: 10.0.255.100
-- vrid: 200
-  priority: 100
-  address: 10.0.255.101
+  local_address: 192.168.122.247
+  remote_address: 192.168.122.141
+  master_advert_interval: 500ms
+  vip_interface: eth0
+  vips:
+    - 192.168.122.2/32
 lvs:
 - name: http
   address:  192.168.122.2

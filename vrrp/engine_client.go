@@ -40,74 +40,91 @@ func (e *DummyEngine) HAUpdate(status HAStatus) (bool, error) {
 	return false, nil
 }
 
-// VIPHAConfig represents the high availability configuration for a node in a
-// Seesaw cluster.
-type VIPHAConfig struct {
+// VIPsHAConfig represents the high availability configuration for a node in a
+// vrrp cluster.
+type VIPsHAConfig struct {
 	HAConfig
-	VIP          net.IP
-	VIPNet       *net.IPNet
 	VIPInterface *net.Interface
+	VIPs         []*VIPsHAConfigVIP
 }
 
-// VIPUpdateEngine implements the Engine interface for testing purposes.
-type VIPUpdateEngine struct {
-	Config *VIPHAConfig
+type VIPsHAConfigVIP struct {
+	IP    net.IP
+	IPNet *net.IPNet
+}
+
+// VIPsUpdateEngine implements the Engine interface for testing purposes.
+type VIPsUpdateEngine struct {
+	Config *VIPsHAConfig
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 }
 
-// HAConfig returns the HAConfig for a VIPUpdateEngine.
-func (e *VIPUpdateEngine) HAConfig() (*HAConfig, error) {
+// HAConfig returns the HAConfig for a VIPsUpdateEngine.
+func (e *VIPsUpdateEngine) HAConfig() (*HAConfig, error) {
 	return &e.Config.HAConfig, nil
 }
 
 // HAState does nothing.
-func (e *VIPUpdateEngine) HAState(state HAState) error {
+func (e *VIPsUpdateEngine) HAState(state HAState) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	c := e.Config
-	hasVIP, err := HasAddr(c.VIPInterface, c.VIP)
+	for _, vipCfg := range c.VIPs {
+		err := e.updateHAStateForVIP(state, vipCfg)
+		if err != nil {
+			// 1つのVIPの追加・削除に失敗しても他のVIPの追加・削除は行いたいので
+			// ログ出力はするがエラーでも抜けずにループを継続する。
+			ltsvlog.Logger.Err(err)
+		}
+	}
+	return nil
+}
+
+func (e *VIPsUpdateEngine) updateHAStateForVIP(state HAState, vipCfg *VIPsHAConfigVIP) error {
+	c := e.Config
+	hasVIP, err := HasAddr(c.VIPInterface, vipCfg.IP)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to check interface has VIP, err=%v", err)
-		}).String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).Stack("")
+		}).String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).Stack("")
 	}
 
 	if state == HAMaster {
 		if hasVIP {
 			ltsvlog.Logger.Info().String("msg", "HAState called but already aquired VIP").Sprintf("state", "%v", state).
-				String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).
-				Stringer("mask", c.VIPNet.Mask).Log()
+				String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).
+				Stringer("mask", vipCfg.IPNet.Mask).Log()
 		} else {
-			err := AddAddr(c.VIPInterface, c.VIP, c.VIPNet, "")
+			err := AddAddr(c.VIPInterface, vipCfg.IP, vipCfg.IPNet, "")
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("failed to add IP address, err=%v", err)
-				}).String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).
-					Stringer("mask", c.VIPNet.Mask).Stack("")
+				}).String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).
+					Stringer("mask", vipCfg.IPNet.Mask).Stack("")
 			}
 		}
 
 		if e.cancel == nil {
 			var ctx context.Context
 			ctx, e.cancel = context.WithCancel(context.TODO())
-			go sendGARPLoop(ctx, c.VIP)
+			go sendGARPLoop(ctx, c.VIPInterface, vipCfg.IP)
 		}
 	} else {
 		if hasVIP {
-			err := DelAddr(c.VIPInterface, c.VIP, c.VIPNet)
+			err := DelAddr(c.VIPInterface, vipCfg.IP, vipCfg.IPNet)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("failed to delete IP address, err=%v", err)
-				}).String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).
-					Stringer("mask", c.VIPNet.Mask).Stack("")
+				}).String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).
+					Stringer("mask", vipCfg.IPNet.Mask).Stack("")
 			}
 		} else {
 			ltsvlog.Logger.Info().String("msg", "HAState called but already released VIP").Sprintf("state", "%v", state).
-				String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).
-				Stringer("mask", c.VIPNet.Mask).Log()
+				String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).
+				Stringer("mask", vipCfg.IPNet.Mask).Log()
 			return nil
 		}
 		if e.cancel != nil {
@@ -115,20 +132,12 @@ func (e *VIPUpdateEngine) HAState(state HAState) error {
 		}
 	}
 	ltsvlog.Logger.Info().String("msg", "HAState updated").Sprintf("state", "%v", state).
-		String("interface", c.VIPInterface.Name).Stringer("vip", c.VIP).
-		Stringer("mask", c.VIPNet.Mask).Log()
+		String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).
+		Stringer("mask", vipCfg.IPNet.Mask).Log()
 	return nil
 }
 
-func sendGARPLoop(ctx context.Context, vip net.IP) {
-	intf, err := InterfaceByIP(vip)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("interface not found for VIP")
-		}).Stringer("vip", vip).Stack(""))
-		return
-	}
-
+func sendGARPLoop(ctx context.Context, intf *net.Interface, vip net.IP) {
 	c, err := arp.Dial(intf)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
@@ -158,6 +167,6 @@ func sendGARPLoop(ctx context.Context, vip net.IP) {
 }
 
 // HAUpdate does nothing.
-func (e *VIPUpdateEngine) HAUpdate(status HAStatus) (bool, error) {
+func (e *VIPsUpdateEngine) HAUpdate(status HAStatus) (bool, error) {
 	return false, nil
 }
