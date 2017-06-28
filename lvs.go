@@ -2,6 +2,7 @@ package keepalivego
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,28 +13,36 @@ import (
 
 	"github.com/hnakamur/ltsvlog"
 	"github.com/masa23/keepalivego/healthcheck"
+	"github.com/masa23/keepalivego/vrrp"
 	"github.com/mqliang/libipvs"
 )
 
 type LVS struct {
 	ipvs             libipvs.IPVSHandle
 	mu               sync.Mutex
+	vrrpNode         *vrrp.Node
 	servicesAndDests *ServicesAndDests
 	checkers         *healthcheck.Checkers
 	checkResultC     chan healthcheck.CheckResult
 }
 
 type Config struct {
-	LogFile        string       `yaml:"logfile"`
-	EnableDebugLog bool         `yaml:"enable_debug_log"`
-	VRRP           []ConfigVRRP `yaml:"vrrp"`
-	LVS            []ConfigLVS  `yaml:"lvs"`
+	LogFile        string      `yaml:"logfile"`
+	EnableDebugLog bool        `yaml:"enable_debug_log"`
+	VRRP           ConfigVRRP  `yaml:"vrrp"`
+	LVS            []ConfigLVS `yaml:"lvs"`
 }
 
 type ConfigVRRP struct {
-	VRID     int    `yaml:"vrid"`
-	Priority int    `yaml:"priority"`
-	Address  string `yaml:"address"`
+	Enabled              bool          `yaml:"enabled"`
+	VRID                 uint8         `yaml:"vrid"`
+	Priority             uint8         `yaml:"priority"`
+	LocalAddress         string        `yaml:"local_address"`
+	RemoteAddress        string        `yaml:"remote_address"`
+	Preempt              bool          `yaml:"preempt"`
+	MasterAdvertInterval time.Duration `yaml:"master_advert_interval"`
+	VIPInterface         string        `yaml:"vip_interface"`
+	VIPs                 []string      `yaml:"vips"`
 }
 
 type ConfigLVS struct {
@@ -76,6 +85,8 @@ type Destination struct {
 	destination *libipvs.Destination
 	service     *libipvs.Service
 }
+
+var ErrInvalidIP = errors.New("invalid IP address")
 
 func destinationKey(srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16) string {
 	return net.JoinHostPort(srcIP.String(), strconv.Itoa(int(srcPort))) + "," +
@@ -128,7 +139,7 @@ func (c *Config) TotalServerCount() int {
 	return cnt
 }
 
-func New() (*LVS, error) {
+func New(config *Config) (*LVS, error) {
 	ipvs, err := libipvs.New()
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
@@ -136,10 +147,94 @@ func New() (*LVS, error) {
 		}).Stack("")
 	}
 
+	node, err := newVRRPNode(&config.VRRP)
+	if err != nil {
+		return nil, err
+	}
+
 	return &LVS{
 		ipvs:     ipvs,
+		vrrpNode: node,
 		checkers: healthcheck.NewCheckers(),
 	}, nil
+}
+
+func newVRRPNode(vrrpCfg *ConfigVRRP) (*vrrp.Node, error) {
+	if !vrrpCfg.Enabled {
+		return nil, nil
+	}
+
+	localAddr := net.ParseIP(vrrpCfg.LocalAddress)
+	if localAddr == nil {
+		return nil, ltsvlog.Err(fmt.Errorf("invalid local IP address (%s)", vrrpCfg.LocalAddress)).
+			String("localAddress", vrrpCfg.LocalAddress).Stack("")
+	}
+
+	remoteAddr := net.ParseIP(vrrpCfg.RemoteAddress)
+	if remoteAddr == nil {
+		return nil, ltsvlog.Err(fmt.Errorf("invalid remote IP address (%s)", vrrpCfg.LocalAddress)).
+			String("remoteAddress", vrrpCfg.LocalAddress).Stack("")
+	}
+
+	vipIntf, err := net.InterfaceByName(vrrpCfg.VIPInterface)
+	if err != nil {
+		return nil, ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("interface not found for name=%s, err=%v", vrrpCfg.VIPInterface, err)
+		}).String("vipInterface", vrrpCfg.VIPInterface).Stack("")
+	}
+	vipCfgs := make([]*vrrp.VIPsHAConfigVIP, len(vrrpCfg.VIPs))
+	for i, vip := range vrrpCfg.VIPs {
+		ip, ipNet, err := net.ParseCIDR(vip)
+		if err != nil {
+			return nil, ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to parse CIDR %s, err=%v", vip, err)
+			}).String("vip", vip).Stack("")
+		}
+		vipCfgs[i] = &vrrp.VIPsHAConfigVIP{IP: ip, IPNet: ipNet}
+	}
+
+	haConfig := vrrp.HAConfig{
+		Enabled:    true,
+		LocalAddr:  localAddr,
+		RemoteAddr: remoteAddr,
+		Priority:   vrrpCfg.Priority,
+		VRID:       vrrpCfg.VRID,
+	}
+	nc := vrrp.NodeConfig{
+		HAConfig:                haConfig,
+		ConfigCheckInterval:     15 * time.Second,
+		ConfigCheckMaxFailures:  3,
+		ConfigCheckRetryDelay:   2 * time.Second,
+		MasterAdvertInterval:    vrrpCfg.MasterAdvertInterval,
+		Preempt:                 vrrpCfg.Preempt,
+		StatusReportInterval:    3 * time.Second,
+		StatusReportMaxFailures: 3,
+		StatusReportRetryDelay:  2 * time.Second,
+	}
+
+	conn, err := vrrp.NewIPHAConn(localAddr, remoteAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	engine := &vrrp.VIPsUpdateEngine{
+		Config: &vrrp.VIPsHAConfig{
+			HAConfig:     haConfig,
+			VIPInterface: vipIntf,
+			VIPs:         vipCfgs,
+		},
+	}
+
+	node := vrrp.NewNode(nc, conn, engine)
+	return node, nil
+}
+
+func (l *LVS) ShutdownVRRPNode() {
+	l.vrrpNode.Shutdown()
+}
+
+func (l *LVS) RunVRRPNode() {
+	l.vrrpNode.Run()
 }
 
 func (l *LVS) Flush() error {

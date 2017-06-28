@@ -53,7 +53,7 @@ func main() {
 		ltsvlog.Logger.Debug().Sprintf("config", "%+v", conf).Log()
 	}
 
-	lvs, err := keepalivego.New()
+	lvs, err := keepalivego.New(&conf)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to create LVS, err=%v", err)
@@ -74,6 +74,7 @@ func main() {
 		for s := range sigc {
 			ltsvlog.Logger.Info().String("msg", "Received signal, initiating shutdown...").Stringer("signal", s).Log()
 			cancel()
+			lvs.ShutdownVRRPNode()
 		}
 	}()
 
@@ -85,5 +86,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	lvs.RunHealthCheckLoop(ctx, &conf)
+	go lvs.RunHealthCheckLoop(ctx, &conf)
+	lvs.RunVRRPNode()
 }
