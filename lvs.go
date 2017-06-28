@@ -141,6 +141,16 @@ func New() (*LVS, error) {
 	}, nil
 }
 
+func (l *LVS) Flush() error {
+	err := l.ipvs.Flush()
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to flush ipvs services, err=%v", err)
+		}).Stack("")
+	}
+	return nil
+}
+
 func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

@@ -60,6 +60,11 @@ func main() {
 		}))
 		os.Exit(1)
 	}
+	err = lvs.Flush()
+	if err != nil {
+		ltsvlog.Logger.Err(err)
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
