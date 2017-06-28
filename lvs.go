@@ -53,12 +53,13 @@ type ConfigServer struct {
 }
 
 type ConfigHealthCheck struct {
-	URL            string        `yaml:"url"`
-	HostHeader     string        `yaml:"host_header"`
-	SkipVerifyCert bool          `yaml:"skip_verify_cert"`
-	OKStatus       int           `yaml:"ok_status"`
-	Timeout        time.Duration `yaml:"timeout"`
-	Interval       time.Duration `yaml:"interval"`
+	URL             string        `yaml:"url"`
+	HostHeader      string        `yaml:"host_header"`
+	EnableKeepAlive bool          `yaml:"enable_keep_alive"`
+	SkipVerifyCert  bool          `yaml:"skip_verify_cert"`
+	OKStatus        int           `yaml:"ok_status"`
+	Timeout         time.Duration `yaml:"timeout"`
+	Interval        time.Duration `yaml:"interval"`
 }
 
 type ServicesAndDests struct {

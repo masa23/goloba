@@ -15,14 +15,15 @@ import (
 )
 
 type Config struct {
-	DestinationKey string
-	Method         string
-	URL            string
-	HostHeader     string
-	SkipVerifyCert bool
-	IsOK           func(*http.Response) (bool, error)
-	Timeout        time.Duration
-	Interval       time.Duration
+	DestinationKey  string
+	Method          string
+	URL             string
+	HostHeader      string
+	EnableKeepAlive bool
+	SkipVerifyCert  bool
+	IsOK            func(*http.Response) (bool, error)
+	Timeout         time.Duration
+	Interval        time.Duration
 }
 
 type CheckResult struct {
@@ -70,20 +71,15 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 	if ltsvlog.Logger.DebugEnabled() {
 		ltsvlog.Logger.Debug().String("msg", "Checker.Run").Sprintf("config", "%+v", c.config).Log()
 	}
-	var tr http.RoundTripper
-	if c.config.SkipVerifyCert {
-		tr = &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}
-	} else {
-		tr = http.DefaultTransport
-	}
 	c.client = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return errors.New("no direct allowed for healthcheck")
 		},
-		Timeout:   c.config.Timeout,
-		Transport: tr,
+		Timeout: c.config.Timeout,
+		Transport: &http.Transport{
+			DisableKeepAlives: !c.config.EnableKeepAlive,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: c.config.SkipVerifyCert},
+		},
 	}
 
 	ticker := time.NewTicker(c.config.Interval)
