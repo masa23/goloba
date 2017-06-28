@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -17,8 +15,7 @@ import (
 )
 
 type Config struct {
-	ServerAddress  string
-	Port           uint16
+	DestinationKey string
 	Method         string
 	URL            string
 	HostHeader     string
@@ -29,10 +26,9 @@ type Config struct {
 }
 
 type CheckResult struct {
-	ServerAddress string
-	Port          uint16
-	OK            bool
-	Err           error
+	DestinationKey string
+	OK             bool
+	Err            error
 }
 
 type Checkers struct {
@@ -55,7 +51,7 @@ func (c *Checkers) AddAndStartChecker(ctx context.Context, config *Config, resul
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := net.JoinHostPort(config.ServerAddress, strconv.Itoa(int(config.Port)))
+	key := config.DestinationKey
 	_, ok := c.checkers[key]
 	if ok {
 		return
@@ -67,13 +63,13 @@ func (c *Checkers) AddAndStartChecker(ctx context.Context, config *Config, resul
 }
 
 func NewChecker(config *Config) *Checker {
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "healthcheck.NewChecker").String("serverAddress", config.ServerAddress).Uint16("port", config.Port).Log()
-	}
 	return &Checker{config: config}
 }
 
 func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "Checker.Run").Sprintf("config", "%+v", c.config).Log()
+	}
 	var tr http.RoundTripper
 	if c.config.SkipVerifyCert {
 		tr = &http.Transport{
@@ -97,13 +93,15 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 		case <-ticker.C:
 			ok, err := c.check()
 			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "healthcheck.Checker.Run").String("serverAddress", c.config.ServerAddress).Uint16("port", c.config.Port).Log()
+				ltsvlog.Logger.Debug().String("msg", "before sending result in Checker.Run").String("destKey", c.config.DestinationKey).Bool("ok", ok).Sprintf("err", "%+v", err).Log()
 			}
 			resultC <- CheckResult{
-				ServerAddress: c.config.ServerAddress,
-				Port:          c.config.Port,
-				OK:            ok,
-				Err:           err,
+				DestinationKey: c.config.DestinationKey,
+				OK:             ok,
+				Err:            err,
+			}
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "after sending result in Checker.Run").String("destKey", c.config.DestinationKey).Bool("ok", ok).Sprintf("err", "%+v", err).Log()
 			}
 		case <-ctx.Done():
 			return
@@ -112,6 +110,9 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 }
 
 func (c *Checker) check() (bool, error) {
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "Checker.check").Sprintf("config", "%+v", c.config).Log()
+	}
 	req, err := http.NewRequest(c.config.Method, c.config.URL, nil)
 	if err != nil {
 		return false, ltsvlog.WrapErr(err, func(err error) error {

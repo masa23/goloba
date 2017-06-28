@@ -62,60 +62,41 @@ type ConfigHealthCheck struct {
 }
 
 type ServicesAndDests struct {
-	services map[string]*ServiceAndDests
+	services     []*ServiceAndDests
+	destinations map[string]*Destination
 }
 
 type ServiceAndDests struct {
 	service      *libipvs.Service
-	destinations map[string]*Destination
+	destinations []*Destination
 }
 
 type Destination struct {
 	destination *libipvs.Destination
+	service     *libipvs.Service
 }
 
-func (s *ServicesAndDests) findDestination(address string, port uint16) (*libipvs.Service, *libipvs.Destination) {
-	ip := net.ParseIP(address)
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "findDestination").String("address", address).Uint16("port", port).Stringer("ip", ip).Log()
-	}
-
-	for _, service := range s.services {
-		for _, dest := range service.destinations {
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "findDestination").Stringer("destAddress", dest.destination.Address).Uint16("destPort", dest.destination.Port).Log()
-			}
-			if dest.destination.Address.Equal(ip) && dest.destination.Port == port {
-				return service.service, dest.destination
-			}
-		}
-	}
-	return nil, nil
+func destinationKey(srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16) string {
+	return net.JoinHostPort(srcIP.String(), strconv.Itoa(int(srcPort))) + "," +
+		net.JoinHostPort(destIP.String(), strconv.Itoa(int(destPort)))
 }
 
-func joinIPAndPort(ip net.IP, port uint16) string {
-	return net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))
+func (s *ServicesAndDests) findDestination(destKey string) *Destination {
+	return s.destinations[destKey]
 }
 
 func listServicesAndDests(h libipvs.IPVSHandle) (*ServicesAndDests, error) {
-	servicesAndDests := &ServicesAndDests{
-		services: make(map[string]*ServiceAndDests),
-	}
-
 	services, err := h.ListServices()
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to list ipvs services, err=%v", err)
 		}).Stack("")
 	}
-	for _, service := range services {
-		serviceAndDests := &ServiceAndDests{
-			service:      service,
-			destinations: make(map[string]*Destination),
-		}
-		serviceKey := joinIPAndPort(service.Address, service.Port)
-		servicesAndDests.services[serviceKey] = serviceAndDests
-
+	servicesAndDests := &ServicesAndDests{
+		services:     make([]*ServiceAndDests, len(services)),
+		destinations: make(map[string]*Destination),
+	}
+	for i, service := range services {
 		dests, err := h.ListDestinations(service)
 		if err != nil {
 			return nil, ltsvlog.WrapErr(err, func(err error) error {
@@ -123,10 +104,17 @@ func listServicesAndDests(h libipvs.IPVSHandle) (*ServicesAndDests, error) {
 			}).Stringer("serviceAddress", service.Address).Stack("")
 		}
 
-		for _, dest := range dests {
-			destKey := joinIPAndPort(dest.Address, dest.Port)
-			serviceAndDests.destinations[destKey] = &Destination{destination: dest}
+		serviceAndDests := &ServiceAndDests{
+			service:      service,
+			destinations: make([]*Destination, len(dests)),
 		}
+		for j, dest := range dests {
+			destination := &Destination{destination: dest, service: service}
+			destKey := destinationKey(service.Address, service.Port, dest.Address, dest.Port)
+			servicesAndDests.destinations[destKey] = destination
+			serviceAndDests.destinations[j] = destination
+		}
+		servicesAndDests.services[i] = serviceAndDests
 	}
 	return servicesAndDests, nil
 }
@@ -315,7 +303,7 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 	}
 	l.servicesAndDests = servicesAndDests
 
-	if l.checkers != nil {
+	if l.checkResultC != nil {
 		l.doUpdateCheckers(ctx, config)
 	}
 
@@ -344,67 +332,75 @@ func findConfigServer(config *Config, address string, port uint16) *ConfigServer
 func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
 	l.checkResultC = make(chan healthcheck.CheckResult, config.TotalServerCount())
-	l.checkers = healthcheck.NewCheckers()
 	l.doUpdateCheckers(ctx, config)
 	l.mu.Unlock()
 
 	for {
 		select {
-		case r := <-l.checkResultC:
-			l.mu.Lock()
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", r).Sprintf("resultType", "%T", r).Uint16("resultPort", r.Port).Log()
+		case result := <-l.checkResultC:
+			err := l.attachOrDetachDestination(ctx, config, &result)
+			if err != nil {
+				ltsvlog.Logger.Err(err)
 			}
-
-			service, destination := l.servicesAndDests.findDestination(r.ServerAddress, r.Port)
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "after findDestination").Sprintf("service", "%+v", service).Sprintf("destination", "%+v", destination).Log()
-			}
-			if r.OK && r.Err == nil {
-				c := findConfigServer(config, r.ServerAddress, r.Port)
-				if c != nil && destination.Weight != c.Weight {
-					destination.Weight = c.Weight
-					err := l.ipvs.UpdateDestination(service, destination)
-					if err != nil {
-						l.mu.Unlock()
-						ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-							return fmt.Errorf("faild to attach ipvs destination, err=%s", err)
-						}).Stringer("address", destination.Address).
-							Uint16("port", destination.Port).
-							Stringer("fwdMethod", destination.FwdMethod).
-							Uint32("weight", destination.Weight).Stack(""))
-					}
-					ltsvlog.Logger.Info().String("msg", "attached destination").
-						Stringer("address", destination.Address).
-						Uint16("port", destination.Port).
-						Stringer("fwdMethod", destination.FwdMethod).
-						Uint32("weight", destination.Weight).Log()
-				}
-			} else {
-				if destination.Weight != 0 {
-					destination.Weight = 0
-					err := l.ipvs.UpdateDestination(service, destination)
-					if err != nil {
-						l.mu.Unlock()
-						ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-							return fmt.Errorf("faild to detach ipvs destination, err=%s", err)
-						}).Stringer("address", destination.Address).
-							Uint16("port", destination.Port).
-							Stringer("fwdMethod", destination.FwdMethod).
-							Uint32("weight", destination.Weight).Stack(""))
-					}
-					ltsvlog.Logger.Info().String("msg", "detached destination").
-						Stringer("address", destination.Address).
-						Uint16("port", destination.Port).
-						Stringer("fwdMethod", destination.FwdMethod).
-						Uint32("weight", destination.Weight).Log()
-				}
-			}
-			l.mu.Unlock()
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, result *healthcheck.CheckResult) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", result).Log()
+	}
+
+	dest := l.servicesAndDests.findDestination(result.DestinationKey)
+	service := dest.service
+	destination := dest.destination
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "after findDestination").Sprintf("service", "%+v", service).Sprintf("destination", "%+v", destination).Log()
+	}
+	if result.OK && result.Err == nil {
+		c := findConfigServer(config, destination.Address.String(), destination.Port)
+		if c != nil && destination.Weight != c.Weight {
+			destination.Weight = c.Weight
+			err := l.ipvs.UpdateDestination(service, destination)
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to attach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stringer("fwdMethod", destination.FwdMethod).
+					Uint32("weight", destination.Weight).Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "attached destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Log()
+		}
+	} else {
+		if destination.Weight != 0 {
+			destination.Weight = 0
+			err := l.ipvs.UpdateDestination(service, destination)
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to detach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stringer("fwdMethod", destination.FwdMethod).
+					Uint32("weight", destination.Weight).Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "detached destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Log()
+		}
+	}
+	return nil
 }
 
 func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
@@ -414,9 +410,9 @@ func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", server.Address).Uint16("serverPort", server.Port).Log()
 			}
+			destKey := destinationKey(net.ParseIP(lvs.Address), lvs.Port, net.ParseIP(server.Address), server.Port)
 			cfg := &healthcheck.Config{
-				ServerAddress:  server.Address,
-				Port:           server.Port,
+				DestinationKey: destKey,
 				Method:         http.MethodGet,
 				URL:            c.URL,
 				HostHeader:     c.HostHeader,
