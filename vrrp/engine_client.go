@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/hnakamur/ltsvlog"
@@ -51,14 +50,13 @@ type VIPsHAConfig struct {
 type VIPsHAConfigVIP struct {
 	IP    net.IP
 	IPNet *net.IPNet
+
+	cancel context.CancelFunc
 }
 
 // VIPsUpdateEngine implements the Engine interface for testing purposes.
 type VIPsUpdateEngine struct {
 	Config *VIPsHAConfig
-
-	mu     sync.Mutex
-	cancel context.CancelFunc
 }
 
 // HAConfig returns the HAConfig for a VIPsUpdateEngine.
@@ -68,11 +66,9 @@ func (e *VIPsUpdateEngine) HAConfig() (*HAConfig, error) {
 
 // HAState does nothing.
 func (e *VIPsUpdateEngine) HAState(state HAState) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	c := e.Config
-	for _, vipCfg := range c.VIPs {
+	for i, vipCfg := range c.VIPs {
+		ltsvlog.Logger.Info().String("msg", "before updateHAStateForVIP").Int("i", i).Sprintf("vipCfg", "%+v", vipCfg).Log()
 		err := e.updateHAStateForVIP(state, vipCfg)
 		if err != nil {
 			// 1つのVIPの追加・削除に失敗しても他のVIPの追加・削除は行いたいので
@@ -107,9 +103,10 @@ func (e *VIPsUpdateEngine) updateHAStateForVIP(state HAState, vipCfg *VIPsHAConf
 			}
 		}
 
-		if e.cancel == nil {
+		if vipCfg.cancel == nil {
 			var ctx context.Context
-			ctx, e.cancel = context.WithCancel(context.TODO())
+			ctx, vipCfg.cancel = context.WithCancel(context.TODO())
+			ltsvlog.Logger.Info().String("msg", "before go sendGARPLoop").Stringer("vip", vipCfg.IP).Log()
 			go sendGARPLoop(ctx, c.VIPInterface, vipCfg.IP)
 		}
 	} else {
@@ -127,8 +124,8 @@ func (e *VIPsUpdateEngine) updateHAStateForVIP(state HAState, vipCfg *VIPsHAConf
 				Stringer("mask", vipCfg.IPNet.Mask).Log()
 			return nil
 		}
-		if e.cancel != nil {
-			e.cancel()
+		if vipCfg.cancel != nil {
+			vipCfg.cancel()
 		}
 	}
 	ltsvlog.Logger.Info().String("msg", "HAState updated").Sprintf("state", "%v", state).

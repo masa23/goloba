@@ -187,9 +187,6 @@ func (n *Node) runOnce() error {
 		case HAMaster:
 			// do nothing
 		case HABackup:
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "Sent advertisements").Uint64("sentCount", atomic.LoadUint64(&n.sendCount)).Log()
-			}
 			n.becomeBackup()
 		case HAShutdown:
 			n.becomeShutdown()
@@ -362,7 +359,9 @@ func (n *Node) sendAdvertisements() {
 			}
 
 			sendCount := atomic.AddUint64(&n.sendCount, 1)
-			ltsvlog.Logger.Info().String("msg", "sendAdvertisements: Sent advertisements").Uint64("sendCount", sendCount).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "sendAdvertisements: Sent advertisements").Uint64("sendCount", sendCount).Log()
+			}
 
 		case newState := <-n.stopSenderChannel:
 			ticker.Stop()
