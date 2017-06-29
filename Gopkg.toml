@@ -27,7 +27,7 @@
 
 [[constraint]]
   branch = "master"
-  name = "github.com/mdlayher/arp"
+  name = "github.com/hnakamur/netutil"
 
 [[constraint]]
   branch = "master"

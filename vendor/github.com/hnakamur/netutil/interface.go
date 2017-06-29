@@ -1,10 +1,8 @@
-package vrrp
+package netutil
 
 import (
 	"errors"
 	"net"
-
-	"github.com/mdlayher/arp"
 )
 
 // InterfaceByIP return the interface matched by the IP address.
@@ -31,15 +29,20 @@ func InterfaceByIP(ip net.IP) (*net.Interface, error) {
 	return nil, errors.New("interface not found")
 }
 
-func SendGARP(c *arp.Client, intf *net.Interface, ip net.IP) error {
-	p, err := arp.NewPacket(arp.OperationRequest, intf.HardwareAddr, ip,
-		net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, ip)
+// HasAddr returns whether or not the interface has the specified IP address.
+func HasAddr(intf *net.Interface, ip net.IP) (bool, error) {
+	addrs, err := intf.Addrs()
 	if err != nil {
-		return err
+		return false, err
 	}
-	err = c.WriteTo(p, net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
-	if err != nil {
-		return err
+	for _, addr := range addrs {
+		i, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return false, err
+		}
+		if i.Equal(ip) {
+			return true, nil
+		}
 	}
-	return nil
+	return false, nil
 }

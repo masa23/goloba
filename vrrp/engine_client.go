@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/hnakamur/ltsvlog"
-	"github.com/mdlayher/arp"
+	"github.com/hnakamur/netutil"
 )
 
 // engine represents an interface to a vrrp engine.
@@ -52,7 +52,7 @@ func (e *VIPsUpdateEngine) HAState(state haState) error {
 
 func (e *VIPsUpdateEngine) updateHAStateForVIP(state haState, vipCfg *VIPsHAConfigVIP) error {
 	c := e.Config
-	hasVIP, err := HasAddr(c.VIPInterface, vipCfg.IP)
+	hasVIP, err := netutil.HasAddr(c.VIPInterface, vipCfg.IP)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to check interface has VIP, err=%v", err)
@@ -65,7 +65,7 @@ func (e *VIPsUpdateEngine) updateHAStateForVIP(state haState, vipCfg *VIPsHAConf
 				String("interface", c.VIPInterface.Name).Stringer("vip", vipCfg.IP).
 				Stringer("mask", vipCfg.IPNet.Mask).Log()
 		} else {
-			err := AddAddr(c.VIPInterface, vipCfg.IP, vipCfg.IPNet, "")
+			err := netutil.AddAddr(c.VIPInterface, vipCfg.IP, vipCfg.IPNet, "")
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("failed to add IP address, err=%v", err)
@@ -82,7 +82,7 @@ func (e *VIPsUpdateEngine) updateHAStateForVIP(state haState, vipCfg *VIPsHAConf
 		}
 	} else {
 		if hasVIP {
-			err := DelAddr(c.VIPInterface, vipCfg.IP, vipCfg.IPNet)
+			err := netutil.DelAddr(c.VIPInterface, vipCfg.IP, vipCfg.IPNet)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("failed to delete IP address, err=%v", err)
@@ -106,21 +106,12 @@ func (e *VIPsUpdateEngine) updateHAStateForVIP(state haState, vipCfg *VIPsHAConf
 }
 
 func sendGARPLoop(ctx context.Context, intf *net.Interface, vip net.IP) {
-	c, err := arp.Dial(intf)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to dial for arp")
-		}).String("interface", intf.Name).Stack(""))
-		return
-	}
-	defer c.Close()
-
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			err := SendGARP(c, intf, vip)
+			err := netutil.SendGARP(intf, vip)
 			if err != nil {
 				ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("failed to send GARP, err=%v", err)

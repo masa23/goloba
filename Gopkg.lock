@@ -15,6 +15,12 @@
 
 [[projects]]
   branch = "master"
+  name = "github.com/hnakamur/netutil"
+  packages = ["."]
+  revision = "8b96abb86d182a9aa4eeeaa4144978098b31cbfb"
+
+[[projects]]
+  branch = "master"
   name = "github.com/mdlayher/arp"
   packages = ["."]
   revision = "43953fc6354aa71b6d6814755eceba262eae9246"
@@ -35,7 +41,7 @@
   branch = "master"
   name = "github.com/mqliang/libipvs"
   packages = ["."]
-  revision = "f9a6672e2773875cdf660e91ae26d85dae34c351"
+  revision = "b5ccc1e5bd005b75d533a255f9c0cb06758e31d5"
 
 [[projects]]
   name = "github.com/pkg/errors"
@@ -47,7 +53,7 @@
   branch = "master"
   name = "golang.org/x/net"
   packages = ["bpf","context"]
-  revision = "d4223d6710aad90f892de3ed4f1e7539ccc444a0"
+  revision = "1f9224279e98554b6a6432d4dd998a739f8b2b7c"
 
 [[projects]]
   branch = "v2"
@@ -58,6 +64,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "c4fbcb40f7b0778d6714dd080996cadc223c4a3890e95aa0b57c969b532c8de8"
+  inputs-digest = "809bbad96f167038cc517a8eb61040167698583178cc9cfc6a3f4beb2c3697f5"
   solver-name = "gps-cdcl"
   solver-version = 1

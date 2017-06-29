@@ -88,16 +88,10 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 		select {
 		case <-ticker.C:
 			ok, err := c.check()
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "before sending result in Checker.Run").String("destKey", c.config.DestinationKey).Bool("ok", ok).Sprintf("err", "%+v", err).Log()
-			}
 			resultC <- CheckResult{
 				DestinationKey: c.config.DestinationKey,
 				OK:             ok,
 				Err:            err,
-			}
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "after sending result in Checker.Run").String("destKey", c.config.DestinationKey).Bool("ok", ok).Sprintf("err", "%+v", err).Log()
 			}
 		case <-ctx.Done():
 			return
