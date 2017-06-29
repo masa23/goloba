@@ -88,6 +88,44 @@ type Destination struct {
 
 var ErrInvalidIP = errors.New("invalid IP address")
 
+func (c *Config) findLVS(addr string, port uint16) *ConfigLVS {
+	for _, lvs := range c.LVS {
+		if lvs.Address == addr && lvs.Port == port {
+			return &lvs
+		}
+	}
+	return nil
+}
+
+func (c *ConfigLVS) findServer(addr string, port uint16) *ConfigServer {
+	for _, s := range c.Servers {
+		if s.Address == addr && s.Port == port {
+			return &s
+		}
+	}
+	return nil
+}
+
+func (s *ServicesAndDests) findService(addr string, port uint16) *ServiceAndDests {
+	for _, serviceAndDests := range s.services {
+		sv := serviceAndDests.service
+		if sv.Address.String() == addr && sv.Port == port {
+			return serviceAndDests
+		}
+	}
+	return nil
+}
+
+func (s *ServiceAndDests) findDestination(addr string, port uint16) *Destination {
+	for _, destination := range s.destinations {
+		d := destination.destination
+		if d.Address.String() == addr && d.Port == port {
+			return destination
+		}
+	}
+	return nil
+}
+
 func destinationKey(srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16) string {
 	return net.JoinHostPort(srcIP.String(), strconv.Itoa(int(srcPort))) + "," +
 		net.JoinHostPort(destIP.String(), strconv.Itoa(int(destPort)))
@@ -237,54 +275,146 @@ func (l *LVS) RunVRRPNode() {
 	l.vrrpNode.Run()
 }
 
-func (l *LVS) Flush() error {
-	err := l.ipvs.Flush()
-	if err != nil {
-		return ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to flush ipvs services, err=%v", err)
-		}).Stack("")
-	}
-	return nil
-}
-
 func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	ipvsServices, err := l.ipvs.ListServices()
+	servicesAndDests, err := listServicesAndDests(l.ipvs)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to list ipvs services, err=%v", err)
-		}).Stack("")
+			return fmt.Errorf("failed to load ipvs services and destinations, err=%v", err)
+		})
+	}
+
+	// 配信をなるべく止めたくないので、libipvs.Serverとlibipvs.Destinationの追加・更新を先に行う。
+	for _, serviceConf := range config.LVS {
+		ipAddr := net.ParseIP(serviceConf.Address)
+		if ipAddr == nil {
+			return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
+				return fmt.Errorf("invalid service IP address, err=%v", err)
+			}).String("address", serviceConf.Address).Stack("")
+		}
+		var service *libipvs.Service
+		serviceAndDests := servicesAndDests.findService(serviceConf.Address, serviceConf.Port)
+		if serviceAndDests == nil {
+			family := libipvs.AddressFamily(ipAddressFamily(ipAddr))
+			service = &libipvs.Service{
+				Address:       ipAddr,
+				AddressFamily: family,
+				Protocol:      libipvs.Protocol(syscall.IPPROTO_TCP),
+				Port:          serviceConf.Port,
+				SchedName:     serviceConf.Schedule,
+			}
+			if err := l.ipvs.NewService(service); err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild create ipvs service, err=%s", err)
+				}).String("address", serviceConf.Address).
+					Uint16("port", serviceConf.Port).
+					String("schedule", serviceConf.Schedule).Stack("")
+			}
+		} else {
+			service = serviceAndDests.service
+			if serviceConf.Schedule != service.SchedName {
+				service.SchedName = serviceConf.Schedule
+				if err := l.ipvs.UpdateService(service); err != nil {
+					return ltsvlog.WrapErr(err, func(err error) error {
+						return fmt.Errorf("faild update ipvs service, err=%s", err)
+					}).String("address", serviceConf.Address).
+						Uint16("port", serviceConf.Port).
+						String("schedule", serviceConf.Schedule).Stack("")
+				}
+
+			}
+		}
+
+		var fwd libipvs.FwdMethod
+		switch serviceConf.Type {
+		case "dr":
+			fwd = libipvs.IP_VS_CONN_F_DROUTE
+		case "nat":
+			fallthrough
+		default:
+			fwd = libipvs.IP_VS_CONN_F_MASQ
+		}
+
+		for _, serverConf := range serviceConf.Servers {
+			serverIP := net.ParseIP(serverConf.Address)
+			if serverIP == nil {
+				return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
+					return fmt.Errorf("invalid serverervice IP address, err=%v", err)
+				}).String("address", serverConf.Address).Stack("")
+			}
+
+			var dest *Destination
+			if serviceAndDests != nil {
+				dest = serviceAndDests.findDestination(serverConf.Address, serverConf.Port)
+			}
+
+			if dest == nil {
+				family := libipvs.AddressFamily(ipAddressFamily(serverIP))
+				destination := &libipvs.Destination{
+					Address:       serverIP,
+					AddressFamily: family,
+					Port:          serverConf.Port,
+					FwdMethod:     fwd,
+					Weight:        serverConf.Weight,
+				}
+				err := l.ipvs.NewDestination(service, destination)
+				if err != nil {
+					return ltsvlog.WrapErr(err, func(err error) error {
+						return fmt.Errorf("faild create ipvs destination, err=%s", err)
+					}).String("address", serverConf.Address).
+						Uint16("port", serverConf.Port).
+						String("fwdMethod", serviceConf.Type).
+						Uint32("weight", serverConf.Weight).Stack("")
+				}
+			} else {
+				destination := dest.destination
+				if fwd != destination.FwdMethod || serverConf.Weight != destination.Weight {
+					destination.FwdMethod = fwd
+					destination.Weight = serverConf.Weight
+					err := l.ipvs.UpdateDestination(service, destination)
+					if err != nil {
+						return ltsvlog.WrapErr(err, func(err error) error {
+							return fmt.Errorf("faild update ipvs destination, err=%s", err)
+						}).String("address", serverConf.Address).
+							Uint16("port", serverConf.Port).
+							String("fwdMethod", serviceConf.Type).
+							Uint32("weight", serverConf.Weight).Stack("")
+					}
+				}
+			}
+		}
 	}
 
 	// 不要な設定を削除
-	for _, ipvsService := range ipvsServices {
-		var serviceConf ConfigLVS
-		exist := false
-		for _, serviceConf = range config.LVS {
-			if ipvsService.Address.Equal(net.ParseIP(serviceConf.Address)) {
-				exist = true
-				break
+	for _, serviceAndDests := range servicesAndDests.services {
+		service := serviceAndDests.service
+		serviceConf := config.findLVS(service.Address.String(), service.Port)
+		if serviceConf == nil {
+			for _, dest := range serviceAndDests.destinations {
+				destination := dest.destination
+				err := l.ipvs.DelDestination(service, destination)
+				if err != nil {
+					return ltsvlog.WrapErr(err, func(err error) error {
+						return fmt.Errorf("faild delete ipvs destination, err=%v", err)
+					}).Stack("")
+				}
 			}
-		}
-		if exist {
-			ipvsDests, err := l.ipvs.ListDestinations(ipvsService)
+
+			err := l.ipvs.DelService(service)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("failed to list ipvs destinations, err=%v", err)
-				}).Stack("")
+					return fmt.Errorf("faild delete ipvs service, err=%s", err)
+				}).Stringer("serviceAddress", service.Address).Stack("")
 			}
-			for _, ipvsDest := range ipvsDests {
-				exist = false
-				for _, server := range serviceConf.Servers {
-					if ipvsDest.Address.Equal(net.ParseIP(server.Address)) {
-						exist = true
-						break
-					}
-				}
-				if !exist {
-					err := l.ipvs.DelDestination(ipvsService, ipvsDest)
+			ltsvlog.Logger.Info().String("msg", "deleted ipvs service").Stringer("serviceAddress", service.Address).Log()
+		} else {
+			for _, dest := range serviceAndDests.destinations {
+				destination := dest.destination
+				serverConf := serviceConf.findServer(destination.Address.String(), destination.Port)
+				if serverConf == nil {
+					err := l.ipvs.DelDestination(service, destination)
 					if err != nil {
 						return ltsvlog.WrapErr(err, func(err error) error {
 							return fmt.Errorf("faild delete ipvs destination, err=%v", err)
@@ -292,113 +422,10 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 					}
 				}
 			}
-		} else {
-			err := l.ipvs.DelService(ipvsService)
-			if err != nil {
-				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("faild delete ipvs service, err=%s", err)
-				}).Stringer("serviceAddress", ipvsService.Address).Stack("")
-			}
-			ltsvlog.Logger.Info().String("msg", "deleted ipvs service").Stringer("serviceAddress", ipvsService.Address).Log()
 		}
 	}
 
-	// 設定追加 更新
-	for _, serviceConf := range config.LVS {
-		ipAddr := net.ParseIP(serviceConf.Address)
-		var ipvsService *libipvs.Service
-		exist := false
-		for _, ipvsService = range ipvsServices {
-			if ipvsService.Address.Equal(ipAddr) {
-				exist = true
-				break
-			}
-		}
-		family := libipvs.AddressFamily(ipAddressFamily(ipAddr))
-		service := libipvs.Service{
-			Address:       ipAddr,
-			AddressFamily: family,
-			Protocol:      libipvs.Protocol(syscall.IPPROTO_TCP),
-			Port:          serviceConf.Port,
-			SchedName:     serviceConf.Schedule,
-		}
-		if !exist {
-			if err := l.ipvs.NewService(&service); err != nil {
-				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("faild create ipvs service, err=%s", err)
-				}).String("address", serviceConf.Address).
-					Uint16("port", serviceConf.Port).
-					String("schedule", serviceConf.Schedule).Stack("")
-			}
-			ipvsService = &service
-		} else {
-			if err := l.ipvs.UpdateService(&service); err != nil {
-				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("faild update ipvs service, err=%s", err)
-				}).String("address", serviceConf.Address).
-					Uint16("port", serviceConf.Port).
-					String("schedule", serviceConf.Schedule).Stack("")
-			}
-		}
-
-		ipvsDests, err := l.ipvs.ListDestinations(ipvsService)
-		if err != nil {
-			return ltsvlog.WrapErr(err, func(err error) error {
-				return fmt.Errorf("failed to list ipvs destinations, err=%v", err)
-			}).Stack("")
-		}
-
-		for _, server := range serviceConf.Servers {
-			ipAddr := net.ParseIP(server.Address)
-			exist = false
-			for _, ipvsDest := range ipvsDests {
-				if ipvsDest.Address.Equal(ipAddr) {
-					exist = true
-					break
-				}
-			}
-			var fwd libipvs.FwdMethod
-			switch serviceConf.Type {
-			case "dr":
-				fwd = libipvs.IP_VS_CONN_F_DROUTE
-			case "nat":
-				fallthrough
-			default:
-				fwd = libipvs.IP_VS_CONN_F_MASQ
-			}
-			family := libipvs.AddressFamily(ipAddressFamily(ipAddr))
-			dest := libipvs.Destination{
-				Address:       ipAddr,
-				AddressFamily: family,
-				Port:          server.Port,
-				FwdMethod:     fwd,
-				Weight:        server.Weight,
-			}
-			if exist {
-				err := l.ipvs.UpdateDestination(ipvsService, &dest)
-				if err != nil {
-					return ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("faild update ipvs destination, err=%s", err)
-					}).String("address", server.Address).
-						Uint16("port", server.Port).
-						String("fwdMethod", serviceConf.Type).
-						Uint32("weight", server.Weight).Stack("")
-				}
-			} else {
-				err := l.ipvs.NewDestination(ipvsService, &dest)
-				if err != nil {
-					return ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("faild create ipvs destination, err=%s", err)
-					}).String("address", server.Address).
-						Uint16("port", server.Port).
-						String("fwdMethod", serviceConf.Type).
-						Uint32("weight", server.Weight).Stack("")
-				}
-			}
-		}
-	}
-
-	servicesAndDests, err := listServicesAndDests(l.ipvs)
+	servicesAndDests, err = listServicesAndDests(l.ipvs)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to load ipvs services and destinations, err=%v", err)
