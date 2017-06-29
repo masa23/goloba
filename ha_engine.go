@@ -1,4 +1,4 @@
-package vrrp
+package keepalivego
 
 import (
 	"context"

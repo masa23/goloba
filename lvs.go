@@ -12,14 +12,13 @@ import (
 	"time"
 
 	"github.com/hnakamur/ltsvlog"
-	"github.com/masa23/keepalivego/vrrp"
 	"github.com/mqliang/libipvs"
 )
 
 type LVS struct {
 	ipvs             libipvs.IPVSHandle
 	mu               sync.Mutex
-	vrrpNode         *vrrp.Node
+	vrrpNode         *Node
 	servicesAndDests *ServicesAndDests
 	checkers         *healthcheckers
 	checkResultC     chan healthcheckResult
@@ -196,7 +195,7 @@ func New(config *Config) (*LVS, error) {
 	}, nil
 }
 
-func newVRRPNode(vrrpCfg *ConfigVRRP) (*vrrp.Node, error) {
+func newVRRPNode(vrrpCfg *ConfigVRRP) (*Node, error) {
 	if !vrrpCfg.Enabled {
 		return nil, nil
 	}
@@ -219,7 +218,7 @@ func newVRRPNode(vrrpCfg *ConfigVRRP) (*vrrp.Node, error) {
 			return fmt.Errorf("interface not found for name=%s, err=%v", vrrpCfg.VIPInterface, err)
 		}).String("vipInterface", vrrpCfg.VIPInterface).Stack("")
 	}
-	vipCfgs := make([]*vrrp.VIPsHAConfigVIP, len(vrrpCfg.VIPs))
+	vipCfgs := make([]*VIPsHAConfigVIP, len(vrrpCfg.VIPs))
 	for i, vip := range vrrpCfg.VIPs {
 		ip, ipNet, err := net.ParseCIDR(vip)
 		if err != nil {
@@ -227,36 +226,36 @@ func newVRRPNode(vrrpCfg *ConfigVRRP) (*vrrp.Node, error) {
 				return fmt.Errorf("failed to parse CIDR %s, err=%v", vip, err)
 			}).String("vip", vip).Stack("")
 		}
-		vipCfgs[i] = &vrrp.VIPsHAConfigVIP{IP: ip, IPNet: ipNet}
+		vipCfgs[i] = &VIPsHAConfigVIP{IP: ip, IPNet: ipNet}
 	}
 
-	haConfig := vrrp.HAConfig{
+	haConfig := HAConfig{
 		Enabled:    true,
 		LocalAddr:  localAddr,
 		RemoteAddr: remoteAddr,
 		Priority:   vrrpCfg.Priority,
 		VRID:       vrrpCfg.VRID,
 	}
-	nc := vrrp.NodeConfig{
+	nc := NodeConfig{
 		HAConfig:             haConfig,
 		MasterAdvertInterval: vrrpCfg.MasterAdvertInterval,
 		Preempt:              vrrpCfg.Preempt,
 	}
 
-	conn, err := vrrp.NewIPHAConn(localAddr, remoteAddr)
+	conn, err := NewIPHAConn(localAddr, remoteAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	engine := &vrrp.VIPsUpdateEngine{
-		Config: &vrrp.VIPsHAConfig{
+	engine := &VIPsUpdateEngine{
+		Config: &VIPsHAConfig{
 			HAConfig:     haConfig,
 			VIPInterface: vipIntf,
 			VIPs:         vipCfgs,
 		},
 	}
 
-	node := vrrp.NewNode(nc, conn, engine)
+	node := NewNode(nc, conn, engine)
 	return node, nil
 }
 
