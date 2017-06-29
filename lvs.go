@@ -22,6 +22,7 @@ type LVS struct {
 	servicesAndDests *ipvsServicesAndDests
 	checkers         *healthcheckers
 	checkResultC     chan healthcheckResult
+	config           *Config
 }
 
 type Config struct {
@@ -189,6 +190,7 @@ func New(config *Config) (*LVS, error) {
 	}
 
 	return &LVS{
+		config:   config,
 		ipvs:     ipvs,
 		vrrpNode: node,
 		checkers: newHealthcheckers(),
@@ -259,12 +261,14 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 	return node, nil
 }
 
-func (l *LVS) ShutdownVRRPNode() {
-	l.vrrpNode.shutdown()
-}
-
-func (l *LVS) RunVRRPNode() {
-	l.vrrpNode.run()
+func (l *LVS) Run(ctx context.Context) error {
+	err := l.ReloadConfig(ctx, l.config)
+	if err != nil {
+		return err
+	}
+	go l.runHealthCheckLoop(ctx, l.config)
+	l.vrrpNode.run(ctx)
+	return nil
 }
 
 func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
@@ -432,6 +436,7 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 		l.doUpdateCheckers(ctx, config)
 	}
 
+	l.config = config
 	return nil
 }
 
@@ -454,7 +459,7 @@ func findConfigServer(config *Config, address string, port uint16) *ServerConfig
 	return nil
 }
 
-func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
+func (l *LVS) runHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
 	l.checkResultC = make(chan healthcheckResult, config.totalServiceCount())
 	l.doUpdateCheckers(ctx, config)

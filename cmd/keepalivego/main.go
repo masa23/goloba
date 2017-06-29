@@ -69,18 +69,12 @@ func main() {
 		for s := range sigc {
 			ltsvlog.Logger.Info().String("msg", "Received signal, initiating shutdown...").Stringer("signal", s).Log()
 			cancel()
-			lvs.ShutdownVRRPNode()
 		}
 	}()
 
-	err = lvs.ReloadConfig(ctx, &conf)
+	err = lvs.Run(ctx)
 	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to reload LVS config, err=%v", err)
-		}))
+		ltsvlog.Logger.Err(err)
 		os.Exit(1)
 	}
-
-	go lvs.RunHealthCheckLoop(ctx, &conf)
-	lvs.RunVRRPNode()
 }

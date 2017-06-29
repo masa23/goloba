@@ -1,6 +1,7 @@
 package keepalivego
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -65,7 +66,6 @@ type haNode struct {
 	errChannel           chan error
 	recvChannel          chan *advertisement
 	stopSenderChannel    chan haState
-	shutdownChannel      chan bool
 }
 
 // newHANode creates a new Node with the given NodeConfig and HAConn.
@@ -78,7 +78,6 @@ func newHANode(cfg haNodeConfig, conn haConn, eng engine) *haNode {
 		errChannel:           make(chan error),
 		recvChannel:          make(chan *advertisement, 20),
 		stopSenderChannel:    make(chan haState),
-		shutdownChannel:      make(chan bool),
 	}
 	n.setState(haBackup)
 	n.resetMasterDownInterval(cfg.MasterAdvertInterval)
@@ -128,26 +127,21 @@ func (n *haNode) newAdvertisement() *advertisement {
 // run sends and receives advertisements, changes this Node's state in response to incoming
 // advertisements, and periodically notifies the engine of the current state. run does not return
 // until Shutdown is called or an unrecoverable error occurs.
-func (n *haNode) run() error {
+func (n *haNode) run(ctx context.Context) error {
 	go n.receiveAdvertisements()
 
 	for n.state() != haShutdown {
-		if err := n.runOnce(); err != nil {
+		if err := n.runOnce(ctx); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// shutdown puts this Node in SHUTDOWN state and causes Run() to return.
-func (n *haNode) shutdown() {
-	n.shutdownChannel <- true
-}
-
-func (n *haNode) runOnce() error {
+func (n *haNode) runOnce(ctx context.Context) error {
 	switch s := n.state(); s {
 	case haBackup:
-		switch newState := n.doBackupTasks(); newState {
+		switch newState := n.doBackupTasks(ctx); newState {
 		case haBackup:
 			// do nothing
 		case haMaster:
@@ -163,7 +157,7 @@ func (n *haNode) runOnce() error {
 		}
 
 	case haMaster:
-		switch newState := n.doMasterTasks(); newState {
+		switch newState := n.doMasterTasks(ctx); newState {
 		case haMaster:
 			// do nothing
 		case haBackup:
@@ -214,7 +208,7 @@ func (n *haNode) becomeShutdown() {
 	n.setState(haShutdown)
 }
 
-func (n *haNode) doMasterTasks() haState {
+func (n *haNode) doMasterTasks(ctx context.Context) haState {
 	select {
 	case advert := <-n.recvChannel:
 		if advert.VersionType != vrrpVersionType {
@@ -236,7 +230,8 @@ func (n *haNode) doMasterTasks() haState {
 			return haBackup
 		}
 
-	case <-n.shutdownChannel:
+	case <-ctx.Done():
+		ltsvlog.Logger.Info().String("msg", "got ctx.Done(), returning haShutdown from doMasterTasks").Log()
 		return haShutdown
 
 	case err := <-n.errChannel:
@@ -249,7 +244,7 @@ func (n *haNode) doMasterTasks() haState {
 	return haMaster
 }
 
-func (n *haNode) doBackupTasks() haState {
+func (n *haNode) doBackupTasks(ctx context.Context) haState {
 	deadline := n.lastMasterAdvertTime.Add(n.masterDownInterval)
 	remaining := deadline.Sub(time.Now())
 	timeout := time.After(remaining)
@@ -257,7 +252,8 @@ func (n *haNode) doBackupTasks() haState {
 	case advert := <-n.recvChannel:
 		return n.backupHandleAdvertisement(advert)
 
-	case <-n.shutdownChannel:
+	case <-ctx.Done():
+		ltsvlog.Logger.Info().String("msg", "got ctx.Done(), returning haShutdown from doBackupTasks").Log()
 		return haShutdown
 
 	case err := <-n.errChannel:
