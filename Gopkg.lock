@@ -5,7 +5,7 @@
   branch = "master"
   name = "github.com/hkwi/nlgo"
   packages = ["."]
-  revision = "a84bdcfa49f5f8947a64e62adf6a41181de2e11a"
+  revision = "dbae43f4fc47bf868bca3cc3c1ea2954c2059842"
 
 [[projects]]
   name = "github.com/hnakamur/ltsvlog"
