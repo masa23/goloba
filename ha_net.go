@@ -120,7 +120,7 @@ type ipHAConn struct {
 }
 
 // newIPHAConn creates a new ipHAConn.
-func newIPHAConn(laddr, raddr net.IP) (haConn, error) {
+func newIPHAConn(laddr, raddr net.IP) (*ipHAConn, error) {
 	sendConn, err := ipConn(laddr, raddr)
 	if err != nil {
 		return nil, err

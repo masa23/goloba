@@ -11,12 +11,6 @@ import (
 	"github.com/hnakamur/ltsvlog"
 )
 
-// haConn represents an HA connection for sending and receiving advertisements between two Nodes.
-type haConn interface {
-	send(advert *advertisement, timeout time.Duration) error
-	receive() (*advertisement, error)
-}
-
 // advertisement represents a VRRPv3 advertisement packet.  Field names and sizes are per RFC 5798.
 type advertisement struct {
 	VersionType  uint8
@@ -55,7 +49,7 @@ type haNodeConfig struct {
 // haNode represents one member of a high availability cluster.
 type haNode struct {
 	haNodeConfig
-	conn                 haConn
+	conn                 *ipHAConn
 	engine               *haEngine
 	statusLock           sync.RWMutex
 	haStatus             haStatus
@@ -69,7 +63,7 @@ type haNode struct {
 }
 
 // newHANode creates a new Node with the given NodeConfig and haConn.
-func newHANode(cfg haNodeConfig, conn haConn, eng *haEngine) *haNode {
+func newHANode(cfg haNodeConfig, conn *ipHAConn, eng *haEngine) *haNode {
 	n := &haNode{
 		haNodeConfig:         cfg,
 		conn:                 conn,
