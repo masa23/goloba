@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hnakamur/ltsvlog"
-	"github.com/masa23/keepalivego/healthcheck"
 	"github.com/masa23/keepalivego/vrrp"
 	"github.com/mqliang/libipvs"
 )
@@ -22,8 +21,8 @@ type LVS struct {
 	mu               sync.Mutex
 	vrrpNode         *vrrp.Node
 	servicesAndDests *ServicesAndDests
-	checkers         *healthcheck.Checkers
-	checkResultC     chan healthcheck.CheckResult
+	checkers         *Checkers
+	checkResultC     chan CheckResult
 }
 
 type Config struct {
@@ -193,7 +192,7 @@ func New(config *Config) (*LVS, error) {
 	return &LVS{
 		ipvs:     ipvs,
 		vrrpNode: node,
-		checkers: healthcheck.NewCheckers(),
+		checkers: NewCheckers(),
 	}, nil
 }
 
@@ -458,7 +457,7 @@ func findConfigServer(config *Config, address string, port uint16) *ConfigServer
 
 func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
-	l.checkResultC = make(chan healthcheck.CheckResult, config.TotalServerCount())
+	l.checkResultC = make(chan CheckResult, config.TotalServerCount())
 	l.doUpdateCheckers(ctx, config)
 	l.mu.Unlock()
 
@@ -475,7 +474,7 @@ func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	}
 }
 
-func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, result *healthcheck.CheckResult) error {
+func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, result *CheckResult) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -538,7 +537,7 @@ func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
 				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", server.Address).Uint16("serverPort", server.Port).Log()
 			}
 			destKey := destinationKey(net.ParseIP(lvs.Address), lvs.Port, net.ParseIP(server.Address), server.Port)
-			cfg := &healthcheck.Config{
+			cfg := &HealthCheckerConfig{
 				DestinationKey: destKey,
 				Method:         http.MethodGet,
 				URL:            c.URL,

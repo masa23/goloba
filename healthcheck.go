@@ -1,4 +1,4 @@
-package healthcheck
+package keepalivego
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/hnakamur/ltsvlog"
 )
 
-type Config struct {
+type HealthCheckerConfig struct {
 	DestinationKey  string
 	Method          string
 	URL             string
@@ -38,7 +38,7 @@ type Checkers struct {
 }
 
 type Checker struct {
-	config *Config
+	config *HealthCheckerConfig
 	client *http.Client
 }
 
@@ -48,7 +48,7 @@ func NewCheckers() *Checkers {
 	}
 }
 
-func (c *Checkers) AddAndStartChecker(ctx context.Context, config *Config, resultC chan<- CheckResult) {
+func (c *Checkers) AddAndStartChecker(ctx context.Context, config *HealthCheckerConfig, resultC chan<- CheckResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -63,7 +63,7 @@ func (c *Checkers) AddAndStartChecker(ctx context.Context, config *Config, resul
 	go checker.Run(ctx, resultC)
 }
 
-func NewChecker(config *Config) *Checker {
+func NewChecker(config *HealthCheckerConfig) *Checker {
 	return &Checker{config: config}
 }
 
