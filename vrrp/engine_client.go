@@ -10,33 +10,9 @@ import (
 	"github.com/mdlayher/arp"
 )
 
-const engineTimeout = 10 * time.Second
-
-// Engine represents an interface to a Seesaw Engine.
+// Engine represents an interface to a vrrp Engine.
 type Engine interface {
-	HAConfig() (*HAConfig, error)
 	HAState(HAState) error
-	HAUpdate(HAStatus) (bool, error)
-}
-
-// DummyEngine implements the Engine interface for testing purposes.
-type DummyEngine struct {
-	Config *HAConfig
-}
-
-// HAConfig returns the HAConfig for a DummyEngine.
-func (e *DummyEngine) HAConfig() (*HAConfig, error) {
-	return e.Config, nil
-}
-
-// HAState does nothing.
-func (e *DummyEngine) HAState(state HAState) error {
-	return nil
-}
-
-// HAUpdate does nothing.
-func (e *DummyEngine) HAUpdate(status HAStatus) (bool, error) {
-	return false, nil
 }
 
 // VIPsHAConfig represents the high availability configuration for a node in a
@@ -57,11 +33,6 @@ type VIPsHAConfigVIP struct {
 // VIPsUpdateEngine implements the Engine interface for testing purposes.
 type VIPsUpdateEngine struct {
 	Config *VIPsHAConfig
-}
-
-// HAConfig returns the HAConfig for a VIPsUpdateEngine.
-func (e *VIPsUpdateEngine) HAConfig() (*HAConfig, error) {
-	return &e.Config.HAConfig, nil
 }
 
 // HAState does nothing.
@@ -161,9 +132,4 @@ func sendGARPLoop(ctx context.Context, intf *net.Interface, vip net.IP) {
 			return
 		}
 	}
-}
-
-// HAUpdate does nothing.
-func (e *VIPsUpdateEngine) HAUpdate(status HAStatus) (bool, error) {
-	return false, nil
 }

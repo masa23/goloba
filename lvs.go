@@ -239,15 +239,9 @@ func newVRRPNode(vrrpCfg *ConfigVRRP) (*vrrp.Node, error) {
 		VRID:       vrrpCfg.VRID,
 	}
 	nc := vrrp.NodeConfig{
-		HAConfig:                haConfig,
-		ConfigCheckInterval:     15 * time.Second,
-		ConfigCheckMaxFailures:  3,
-		ConfigCheckRetryDelay:   2 * time.Second,
-		MasterAdvertInterval:    vrrpCfg.MasterAdvertInterval,
-		Preempt:                 vrrpCfg.Preempt,
-		StatusReportInterval:    3 * time.Second,
-		StatusReportMaxFailures: 3,
-		StatusReportRetryDelay:  2 * time.Second,
+		HAConfig:             haConfig,
+		MasterAdvertInterval: vrrpCfg.MasterAdvertInterval,
+		Preempt:              vrrpCfg.Preempt,
 	}
 
 	conn, err := vrrp.NewIPHAConn(localAddr, remoteAddr)

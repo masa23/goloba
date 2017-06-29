@@ -3,10 +3,8 @@ package vrrp
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/hnakamur/ltsvlog"
@@ -49,14 +47,8 @@ const (
 // NodeConfig specifies the configuration for a Node.
 type NodeConfig struct {
 	HAConfig
-	ConfigCheckInterval     time.Duration
-	ConfigCheckMaxFailures  int
-	ConfigCheckRetryDelay   time.Duration
-	MasterAdvertInterval    time.Duration
-	Preempt                 bool
-	StatusReportInterval    time.Duration
-	StatusReportMaxFailures int
-	StatusReportRetryDelay  time.Duration
+	MasterAdvertInterval time.Duration
+	Preempt              bool
 }
 
 // Node represents one member of a high availability cluster.
@@ -123,16 +115,6 @@ func (n *Node) setState(s HAState) {
 	}
 }
 
-// status returns the current HA status for this node.
-func (n *Node) status() HAStatus {
-	n.statusLock.Lock()
-	defer n.statusLock.Unlock()
-	n.haStatus.Sent = atomic.LoadUint64(&n.sendCount)
-	n.haStatus.Received = atomic.LoadUint64(&n.receiveCount)
-	n.haStatus.ReceivedQueued = uint64(len(n.recvChannel))
-	return n.haStatus
-}
-
 // newAdvertisement creates a new Advertisement with this Node's VRID and priority.
 func (n *Node) newAdvertisement() *advertisement {
 	return &advertisement{
@@ -148,8 +130,6 @@ func (n *Node) newAdvertisement() *advertisement {
 // until Shutdown is called or an unrecoverable error occurs.
 func (n *Node) Run() error {
 	go n.receiveAdvertisements()
-	go n.reportStatus()
-	go n.checkConfig()
 
 	for n.state() != HAShutdown {
 		if err := n.runOnce(); err != nil {
@@ -203,7 +183,6 @@ func (n *Node) runOnce() error {
 func (n *Node) becomeMaster() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeMaster").Log()
 	if err := n.engine.HAState(HAMaster); err != nil {
-		// Ignore for now - reportStatus will notify the engine or die trying.
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
@@ -214,7 +193,6 @@ func (n *Node) becomeMaster() {
 func (n *Node) becomeBackup() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeBackup").Log()
 	if err := n.engine.HAState(HABackup); err != nil {
-		// Ignore for now - reportStatus will notify the engine or die trying.
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
@@ -225,7 +203,6 @@ func (n *Node) becomeBackup() {
 func (n *Node) becomeShutdown() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeShutdown").Log()
 	if err := n.engine.HAState(HAShutdown); err != nil {
-		// Ignore for now - reportStatus will notify the engine or die trying.
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
@@ -396,68 +373,4 @@ func (n *Node) receiveAdvertisements() {
 			n.queueAdvertisement(advert)
 		}
 	}
-}
-
-func (n *Node) reportStatus() {
-	for _ = range time.Tick(n.StatusReportInterval) {
-		var err error
-		failover := false
-		failures := 0
-		for failover, err = n.engine.HAUpdate(n.status()); err != nil; {
-			failures++
-			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-				return fmt.Errorf("reportStatus: %v", err)
-			}).Stack(""))
-			if failures > n.StatusReportMaxFailures {
-				n.errChannel <- ltsvlog.Err(fmt.Errorf("reportStatus: %d errors, giving up", failures)).Int("failures", failures).Stack("")
-				return
-			}
-			time.Sleep(n.StatusReportRetryDelay)
-		}
-		if failover && n.state() == HAMaster {
-			ltsvlog.Logger.Info().String("msg", "Received failover request, initiating shutdown...").Log()
-			n.Shutdown()
-		}
-	}
-}
-
-func (n *Node) checkConfig() {
-	for _ = range time.Tick(n.ConfigCheckInterval) {
-		failures := 0
-		var cfg *HAConfig
-		var err error
-		for cfg, err = n.engine.HAConfig(); err != nil; {
-			failures++
-			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-				return fmt.Errorf("checkConfig: %v", err)
-			}).Stack(""))
-			if failures > n.ConfigCheckMaxFailures {
-				n.errChannel <- ltsvlog.Err(fmt.Errorf("checkConfig: %d errors, giving up", failures)).Int("failures", failures).Stack("")
-				return
-			}
-			time.Sleep(n.ConfigCheckRetryDelay)
-		}
-		if !cfg.Equal(&n.HAConfig) {
-			ltsvlog.Logger.Info().Sprintf("previousHAConfig", "%v", n.HAConfig).Sprintf("newHAConfig", "%v", *cfg).Log()
-			n.errChannel <- ltsvlog.Err(fmt.Errorf("checkConfig: HAConfig has changed")).Stack("")
-		}
-	}
-}
-
-// Shutdowner is an interface for a server that can be shutdown.
-type Shutdowner interface {
-	Shutdown()
-}
-
-// ShutdownHandler configures signal handling and initiates a shutdown if a
-// SIGINT, SIGQUIT or SIGTERM is received by the process.
-func ShutdownHandler(server Shutdowner) {
-	sigc := make(chan os.Signal, 3)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
-	go func() {
-		for s := range sigc {
-			ltsvlog.Logger.Info().String("msg", "Received signal, initiating shutdown...").Stringer("signal", s).Log()
-			server.Shutdown()
-		}
-	}()
 }
