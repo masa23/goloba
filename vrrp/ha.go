@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// HAState indicates the High-Availability state of a Seesaw Node.
-type HAState int
+// haState indicates the High-Availability state of a Seesaw Node.
+type haState int
 
 const (
-	HAUnknown HAState = iota
+	HAUnknown haState = iota
 	HABackup
 	HADisabled
 	HAError
@@ -17,10 +17,10 @@ const (
 	HAShutdown
 )
 
-// HAStatus indicates the High-Availability status for a Seesaw Node.
-type HAStatus struct {
+// haStatus indicates the High-Availability status for a Seesaw Node.
+type haStatus struct {
 	LastUpdate     time.Time
-	State          HAState
+	State          haState
 	Since          time.Time
 	Sent           uint64
 	Received       uint64

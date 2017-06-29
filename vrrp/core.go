@@ -10,8 +10,8 @@ import (
 	"github.com/hnakamur/ltsvlog"
 )
 
-// HAConn represents an HA connection for sending and receiving advertisements between two Nodes.
-type HAConn interface {
+// haConn represents an HA connection for sending and receiving advertisements between two Nodes.
+type haConn interface {
 	send(advert *advertisement, timeout time.Duration) error
 	receive() (*advertisement, error)
 }
@@ -54,30 +54,30 @@ type NodeConfig struct {
 // Node represents one member of a high availability cluster.
 type Node struct {
 	NodeConfig
-	conn                 HAConn
-	engine               Engine
+	conn                 haConn
+	engine               engine
 	statusLock           sync.RWMutex
-	haStatus             HAStatus
+	haStatus             haStatus
 	sendCount            uint64
 	receiveCount         uint64
 	masterDownInterval   time.Duration
 	lastMasterAdvertTime time.Time
 	errChannel           chan error
 	recvChannel          chan *advertisement
-	stopSenderChannel    chan HAState
+	stopSenderChannel    chan haState
 	shutdownChannel      chan bool
 }
 
 // NewNode creates a new Node with the given NodeConfig and HAConn.
-func NewNode(cfg NodeConfig, conn HAConn, engine Engine) *Node {
+func NewNode(cfg NodeConfig, conn haConn, eng engine) *Node {
 	n := &Node{
 		NodeConfig:           cfg,
 		conn:                 conn,
-		engine:               engine,
+		engine:               eng,
 		lastMasterAdvertTime: time.Now(),
 		errChannel:           make(chan error),
 		recvChannel:          make(chan *advertisement, 20),
-		stopSenderChannel:    make(chan HAState),
+		stopSenderChannel:    make(chan haState),
 		shutdownChannel:      make(chan bool),
 	}
 	n.setState(HABackup)
@@ -98,14 +98,14 @@ func (n *Node) resetMasterDownInterval(advertInterval time.Duration) {
 }
 
 // state returns the current HA state for this node.
-func (n *Node) state() HAState {
+func (n *Node) state() haState {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.haStatus.State
 }
 
 // setState changes the HA state for this node.
-func (n *Node) setState(s HAState) {
+func (n *Node) setState(s haState) {
 	n.statusLock.Lock()
 	defer n.statusLock.Unlock()
 	if n.haStatus.State != s {
@@ -214,7 +214,7 @@ func (n *Node) becomeShutdown() {
 	n.setState(HAShutdown)
 }
 
-func (n *Node) doMasterTasks() HAState {
+func (n *Node) doMasterTasks() haState {
 	select {
 	case advert := <-n.recvChannel:
 		if advert.VersionType != vrrpVersionType {
@@ -249,7 +249,7 @@ func (n *Node) doMasterTasks() HAState {
 	return HAMaster
 }
 
-func (n *Node) doBackupTasks() HAState {
+func (n *Node) doBackupTasks() haState {
 	deadline := n.lastMasterAdvertTime.Add(n.masterDownInterval)
 	remaining := deadline.Sub(time.Now())
 	timeout := time.After(remaining)
@@ -279,7 +279,7 @@ func (n *Node) doBackupTasks() HAState {
 	}
 }
 
-func (n *Node) backupHandleAdvertisement(advert *advertisement) HAState {
+func (n *Node) backupHandleAdvertisement(advert *advertisement) haState {
 	switch {
 	case advert.VersionType != vrrpVersionType:
 		// Ignore

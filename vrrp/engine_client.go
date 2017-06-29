@@ -10,9 +10,9 @@ import (
 	"github.com/mdlayher/arp"
 )
 
-// Engine represents an interface to a vrrp Engine.
-type Engine interface {
-	HAState(HAState) error
+// engine represents an interface to a vrrp engine.
+type engine interface {
+	HAState(haState) error
 }
 
 // VIPsHAConfig represents the high availability configuration for a node in a
@@ -36,7 +36,7 @@ type VIPsUpdateEngine struct {
 }
 
 // HAState does nothing.
-func (e *VIPsUpdateEngine) HAState(state HAState) error {
+func (e *VIPsUpdateEngine) HAState(state haState) error {
 	c := e.Config
 	for i, vipCfg := range c.VIPs {
 		ltsvlog.Logger.Info().String("msg", "before updateHAStateForVIP").Int("i", i).Sprintf("vipCfg", "%+v", vipCfg).Log()
@@ -50,7 +50,7 @@ func (e *VIPsUpdateEngine) HAState(state HAState) error {
 	return nil
 }
 
-func (e *VIPsUpdateEngine) updateHAStateForVIP(state HAState, vipCfg *VIPsHAConfigVIP) error {
+func (e *VIPsUpdateEngine) updateHAStateForVIP(state haState, vipCfg *VIPsHAConfigVIP) error {
 	c := e.Config
 	hasVIP, err := HasAddr(c.VIPInterface, vipCfg.IP)
 	if err != nil {
