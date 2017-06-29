@@ -19,7 +19,7 @@ type LVS struct {
 	ipvs             libipvs.IPVSHandle
 	mu               sync.Mutex
 	vrrpNode         *haNode
-	servicesAndDests *ServicesAndDests
+	servicesAndDests *ipvsServicesAndDests
 	checkers         *healthcheckers
 	checkResultC     chan healthcheckResult
 }
@@ -27,11 +27,11 @@ type LVS struct {
 type Config struct {
 	LogFile        string      `yaml:"logfile"`
 	EnableDebugLog bool        `yaml:"enable_debug_log"`
-	VRRP           ConfigVRRP  `yaml:"vrrp"`
-	LVS            []ConfigLVS `yaml:"lvs"`
+	VRRP           VRRPConfig  `yaml:"vrrp"`
+	LVS            []LVSConfig `yaml:"lvs"`
 }
 
-type ConfigVRRP struct {
+type VRRPConfig struct {
 	Enabled              bool          `yaml:"enabled"`
 	VRID                 uint8         `yaml:"vrid"`
 	Priority             uint8         `yaml:"priority"`
@@ -43,23 +43,23 @@ type ConfigVRRP struct {
 	VIPs                 []string      `yaml:"vips"`
 }
 
-type ConfigLVS struct {
+type LVSConfig struct {
 	Name     string         `yaml:"name"`
 	Port     uint16         `yaml:"port"`
 	Address  string         `yaml:"address"`
 	Schedule string         `yaml:"schedule"`
 	Type     string         `yaml:"type"`
-	Servers  []ConfigServer `yaml:"servers"`
+	Servers  []ServerConfig `yaml:"servers"`
 }
 
-type ConfigServer struct {
+type ServerConfig struct {
 	Port        uint16            `yaml:"port"`
 	Address     string            `yaml:"address"`
 	Weight      uint32            `yaml:"weight"`
-	HealthCheck ConfigHealthCheck `yaml:"health_check"`
+	HealthCheck HealthCheckConfig `yaml:"health_check"`
 }
 
-type ConfigHealthCheck struct {
+type HealthCheckConfig struct {
 	URL             string        `yaml:"url"`
 	HostHeader      string        `yaml:"host_header"`
 	EnableKeepAlive bool          `yaml:"enable_keep_alive"`
@@ -69,24 +69,24 @@ type ConfigHealthCheck struct {
 	Interval        time.Duration `yaml:"interval"`
 }
 
-type ServicesAndDests struct {
-	services     []*ServiceAndDests
-	destinations map[string]*Destination
+type ipvsServicesAndDests struct {
+	services     []*ipvsServiceAndDests
+	destinations map[string]*ipvsDestination
 }
 
-type ServiceAndDests struct {
+type ipvsServiceAndDests struct {
 	service      *libipvs.Service
-	destinations []*Destination
+	destinations []*ipvsDestination
 }
 
-type Destination struct {
+type ipvsDestination struct {
 	destination *libipvs.Destination
 	service     *libipvs.Service
 }
 
 var ErrInvalidIP = errors.New("invalid IP address")
 
-func (c *Config) findLVS(addr string, port uint16) *ConfigLVS {
+func (c *Config) findLVS(addr string, port uint16) *LVSConfig {
 	for _, lvs := range c.LVS {
 		if lvs.Address == addr && lvs.Port == port {
 			return &lvs
@@ -95,7 +95,7 @@ func (c *Config) findLVS(addr string, port uint16) *ConfigLVS {
 	return nil
 }
 
-func (c *ConfigLVS) findServer(addr string, port uint16) *ConfigServer {
+func (c *LVSConfig) findServer(addr string, port uint16) *ServerConfig {
 	for _, s := range c.Servers {
 		if s.Address == addr && s.Port == port {
 			return &s
@@ -104,7 +104,7 @@ func (c *ConfigLVS) findServer(addr string, port uint16) *ConfigServer {
 	return nil
 }
 
-func (s *ServicesAndDests) findService(addr string, port uint16) *ServiceAndDests {
+func (s *ipvsServicesAndDests) findService(addr string, port uint16) *ipvsServiceAndDests {
 	for _, serviceAndDests := range s.services {
 		sv := serviceAndDests.service
 		if sv.Address.String() == addr && sv.Port == port {
@@ -114,7 +114,7 @@ func (s *ServicesAndDests) findService(addr string, port uint16) *ServiceAndDest
 	return nil
 }
 
-func (s *ServiceAndDests) findDestination(addr string, port uint16) *Destination {
+func (s *ipvsServiceAndDests) findDestination(addr string, port uint16) *ipvsDestination {
 	for _, destination := range s.destinations {
 		d := destination.destination
 		if d.Address.String() == addr && d.Port == port {
@@ -129,20 +129,20 @@ func destinationKey(srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16
 		net.JoinHostPort(destIP.String(), strconv.Itoa(int(destPort)))
 }
 
-func (s *ServicesAndDests) findDestination(destKey string) *Destination {
+func (s *ipvsServicesAndDests) findDestination(destKey string) *ipvsDestination {
 	return s.destinations[destKey]
 }
 
-func listServicesAndDests(h libipvs.IPVSHandle) (*ServicesAndDests, error) {
+func listServicesAndDests(h libipvs.IPVSHandle) (*ipvsServicesAndDests, error) {
 	services, err := h.ListServices()
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to list ipvs services, err=%v", err)
 		}).Stack("")
 	}
-	servicesAndDests := &ServicesAndDests{
-		services:     make([]*ServiceAndDests, len(services)),
-		destinations: make(map[string]*Destination),
+	servicesAndDests := &ipvsServicesAndDests{
+		services:     make([]*ipvsServiceAndDests, len(services)),
+		destinations: make(map[string]*ipvsDestination),
 	}
 	for i, service := range services {
 		dests, err := h.ListDestinations(service)
@@ -152,12 +152,12 @@ func listServicesAndDests(h libipvs.IPVSHandle) (*ServicesAndDests, error) {
 			}).Stringer("serviceAddress", service.Address).Stack("")
 		}
 
-		serviceAndDests := &ServiceAndDests{
+		serviceAndDests := &ipvsServiceAndDests{
 			service:      service,
-			destinations: make([]*Destination, len(dests)),
+			destinations: make([]*ipvsDestination, len(dests)),
 		}
 		for j, dest := range dests {
-			destination := &Destination{destination: dest, service: service}
+			destination := &ipvsDestination{destination: dest, service: service}
 			destKey := destinationKey(service.Address, service.Port, dest.Address, dest.Port)
 			servicesAndDests.destinations[destKey] = destination
 			serviceAndDests.destinations[j] = destination
@@ -167,7 +167,7 @@ func listServicesAndDests(h libipvs.IPVSHandle) (*ServicesAndDests, error) {
 	return servicesAndDests, nil
 }
 
-func (c *Config) TotalServerCount() int {
+func (c *Config) totalServiceCount() int {
 	cnt := 0
 	for _, lvs := range c.LVS {
 		cnt += len(lvs.Servers)
@@ -195,7 +195,7 @@ func New(config *Config) (*LVS, error) {
 	}, nil
 }
 
-func newVRRPNode(vrrpCfg *ConfigVRRP) (*haNode, error) {
+func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 	if !vrrpCfg.Enabled {
 		return nil, nil
 	}
@@ -337,7 +337,7 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 				}).String("address", serverConf.Address).Stack("")
 			}
 
-			var dest *Destination
+			var dest *ipvsDestination
 			if serviceAndDests != nil {
 				dest = serviceAndDests.findDestination(serverConf.Address, serverConf.Port)
 			}
@@ -443,7 +443,7 @@ func ipAddressFamily(ip net.IP) int {
 	}
 }
 
-func findConfigServer(config *Config, address string, port uint16) *ConfigServer {
+func findConfigServer(config *Config, address string, port uint16) *ServerConfig {
 	for _, lvs := range config.LVS {
 		for _, server := range lvs.Servers {
 			if server.Address == address && server.Port == port {
@@ -456,7 +456,7 @@ func findConfigServer(config *Config, address string, port uint16) *ConfigServer
 
 func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
-	l.checkResultC = make(chan healthcheckResult, config.TotalServerCount())
+	l.checkResultC = make(chan healthcheckResult, config.totalServiceCount())
 	l.doUpdateCheckers(ctx, config)
 	l.mu.Unlock()
 
