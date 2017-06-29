@@ -44,16 +44,16 @@ const (
 	vrrpPort = 112
 )
 
-// NodeConfig specifies the configuration for a Node.
-type NodeConfig struct {
-	HAConfig
+// haNodeConfig specifies the configuration for a Node.
+type haNodeConfig struct {
+	haConfig
 	MasterAdvertInterval time.Duration
 	Preempt              bool
 }
 
-// Node represents one member of a high availability cluster.
-type Node struct {
-	NodeConfig
+// haNode represents one member of a high availability cluster.
+type haNode struct {
+	haNodeConfig
 	conn                 haConn
 	engine               engine
 	statusLock           sync.RWMutex
@@ -68,10 +68,10 @@ type Node struct {
 	shutdownChannel      chan bool
 }
 
-// NewNode creates a new Node with the given NodeConfig and HAConn.
-func NewNode(cfg NodeConfig, conn haConn, eng engine) *Node {
-	n := &Node{
-		NodeConfig:           cfg,
+// newHANode creates a new Node with the given NodeConfig and HAConn.
+func newHANode(cfg haNodeConfig, conn haConn, eng engine) *haNode {
+	n := &haNode{
+		haNodeConfig:         cfg,
 		conn:                 conn,
 		engine:               eng,
 		lastMasterAdvertTime: time.Now(),
@@ -80,13 +80,13 @@ func NewNode(cfg NodeConfig, conn haConn, eng engine) *Node {
 		stopSenderChannel:    make(chan haState),
 		shutdownChannel:      make(chan bool),
 	}
-	n.setState(HABackup)
+	n.setState(haBackup)
 	n.resetMasterDownInterval(cfg.MasterAdvertInterval)
 	return n
 }
 
 // resetMasterDownInterval calculates masterDownInterval per RFC 5798.
-func (n *Node) resetMasterDownInterval(advertInterval time.Duration) {
+func (n *haNode) resetMasterDownInterval(advertInterval time.Duration) {
 	skewTime := (time.Duration((256 - int(n.Priority))) * (advertInterval)) / 256
 	masterDownInterval := 3*(advertInterval) + skewTime
 	if masterDownInterval != n.masterDownInterval {
@@ -98,14 +98,14 @@ func (n *Node) resetMasterDownInterval(advertInterval time.Duration) {
 }
 
 // state returns the current HA state for this node.
-func (n *Node) state() haState {
+func (n *haNode) state() haState {
 	n.statusLock.RLock()
 	defer n.statusLock.RUnlock()
 	return n.haStatus.State
 }
 
 // setState changes the HA state for this node.
-func (n *Node) setState(s haState) {
+func (n *haNode) setState(s haState) {
 	n.statusLock.Lock()
 	defer n.statusLock.Unlock()
 	if n.haStatus.State != s {
@@ -116,7 +116,7 @@ func (n *Node) setState(s haState) {
 }
 
 // newAdvertisement creates a new Advertisement with this Node's VRID and priority.
-func (n *Node) newAdvertisement() *advertisement {
+func (n *haNode) newAdvertisement() *advertisement {
 	return &advertisement{
 		VersionType: vrrpVersionType,
 		VRID:        n.VRID,
@@ -125,13 +125,13 @@ func (n *Node) newAdvertisement() *advertisement {
 	}
 }
 
-// Run sends and receives advertisements, changes this Node's state in response to incoming
-// advertisements, and periodically notifies the engine of the current state. Run does not return
+// run sends and receives advertisements, changes this Node's state in response to incoming
+// advertisements, and periodically notifies the engine of the current state. run does not return
 // until Shutdown is called or an unrecoverable error occurs.
-func (n *Node) Run() error {
+func (n *haNode) run() error {
 	go n.receiveAdvertisements()
 
-	for n.state() != HAShutdown {
+	for n.state() != haShutdown {
 		if err := n.runOnce(); err != nil {
 			return err
 		}
@@ -139,36 +139,36 @@ func (n *Node) Run() error {
 	return nil
 }
 
-// Shutdown puts this Node in SHUTDOWN state and causes Run() to return.
-func (n *Node) Shutdown() {
+// shutdown puts this Node in SHUTDOWN state and causes Run() to return.
+func (n *haNode) shutdown() {
 	n.shutdownChannel <- true
 }
 
-func (n *Node) runOnce() error {
+func (n *haNode) runOnce() error {
 	switch s := n.state(); s {
-	case HABackup:
+	case haBackup:
 		switch newState := n.doBackupTasks(); newState {
-		case HABackup:
+		case haBackup:
 			// do nothing
-		case HAMaster:
+		case haMaster:
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "received advertisements").Uint64("receiveCount", atomic.LoadUint64(&n.receiveCount)).Int("recvChannelLen", len(n.recvChannel)).Log()
 				ltsvlog.Logger.Debug().String("msg", "Last master Advertisement dequeued").String("dequeuedAt", n.lastMasterAdvertTime.Format(time.StampMilli)).Log()
 			}
 			n.becomeMaster()
-		case HAShutdown:
+		case haShutdown:
 			n.becomeShutdown()
 		default:
 			return ltsvlog.Err(fmt.Errorf("runOnce: Can't handle transition from %v to %v", s, newState)).Stack("")
 		}
 
-	case HAMaster:
+	case haMaster:
 		switch newState := n.doMasterTasks(); newState {
-		case HAMaster:
+		case haMaster:
 			// do nothing
-		case HABackup:
+		case haBackup:
 			n.becomeBackup()
-		case HAShutdown:
+		case haShutdown:
 			n.becomeShutdown()
 		default:
 			return ltsvlog.Err(fmt.Errorf("runOnce: Can't handle transition from %v to %v", s, newState)).Stack("")
@@ -180,76 +180,76 @@ func (n *Node) runOnce() error {
 	return nil
 }
 
-func (n *Node) becomeMaster() {
+func (n *haNode) becomeMaster() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeMaster").Log()
-	if err := n.engine.HAState(HAMaster); err != nil {
+	if err := n.engine.HAState(haMaster); err != nil {
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
 	go n.sendAdvertisements()
-	n.setState(HAMaster)
+	n.setState(haMaster)
 }
 
-func (n *Node) becomeBackup() {
+func (n *haNode) becomeBackup() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeBackup").Log()
-	if err := n.engine.HAState(HABackup); err != nil {
+	if err := n.engine.HAState(haBackup); err != nil {
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
-	n.stopSenderChannel <- HABackup
-	n.setState(HABackup)
+	n.stopSenderChannel <- haBackup
+	n.setState(haBackup)
 }
 
-func (n *Node) becomeShutdown() {
+func (n *haNode) becomeShutdown() {
 	ltsvlog.Logger.Info().String("msg", "Node.becomeShutdown").Log()
-	if err := n.engine.HAState(HAShutdown); err != nil {
+	if err := n.engine.HAState(haShutdown); err != nil {
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
-	if n.state() == HAMaster {
-		n.stopSenderChannel <- HAShutdown
+	if n.state() == haMaster {
+		n.stopSenderChannel <- haShutdown
 		// Sleep for a moment so sendAdvertisements() has a chance to send the shutdown advertisment.
 		time.Sleep(500 * time.Millisecond)
 	}
-	n.setState(HAShutdown)
+	n.setState(haShutdown)
 }
 
-func (n *Node) doMasterTasks() haState {
+func (n *haNode) doMasterTasks() haState {
 	select {
 	case advert := <-n.recvChannel:
 		if advert.VersionType != vrrpVersionType {
 			// Ignore
-			return HAMaster
+			return haMaster
 		}
 		if advert.VRID != n.VRID {
 			ltsvlog.Logger.Info().String("msg", "doMasterTasks: ignoring Advertisement").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
-			return HAMaster
+			return haMaster
 		}
 		if advert.Priority == n.Priority {
 			// TODO(angusc): RFC 5798 says we should compare IP addresses at this point.
 			ltsvlog.Logger.Info().String("msg", "doMasterTasks: ignoring Advertisement with my priority").Uint8("peerPriority", advert.Priority).Log()
-			return HAMaster
+			return haMaster
 		}
 		if advert.Priority > n.Priority {
 			ltsvlog.Logger.Info().String("msg", "doMasterTasks: peer priority > my priority - becoming BACKUP").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
 			n.lastMasterAdvertTime = time.Now()
-			return HABackup
+			return haBackup
 		}
 
 	case <-n.shutdownChannel:
-		return HAShutdown
+		return haShutdown
 
 	case err := <-n.errChannel:
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("doMasterTasks: %v", err)
 		}))
-		return HAError
+		return haError
 	}
 	// no change
-	return HAMaster
+	return haMaster
 }
 
-func (n *Node) doBackupTasks() haState {
+func (n *haNode) doBackupTasks() haState {
 	deadline := n.lastMasterAdvertTime.Add(n.masterDownInterval)
 	remaining := deadline.Sub(time.Now())
 	timeout := time.After(remaining)
@@ -258,13 +258,13 @@ func (n *Node) doBackupTasks() haState {
 		return n.backupHandleAdvertisement(advert)
 
 	case <-n.shutdownChannel:
-		return HAShutdown
+		return haShutdown
 
 	case err := <-n.errChannel:
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("doBackupTasks: %v", err)
 		}))
-		return HAError
+		return haError
 
 	case <-timeout:
 		ltsvlog.Logger.Info().String("msg", "doBackupTasks: timed out waiting for Advertisement").Stringer("remaing", remaining).Log()
@@ -274,38 +274,38 @@ func (n *Node) doBackupTasks() haState {
 			return n.backupHandleAdvertisement(advert)
 		default:
 			ltsvlog.Logger.Info().String("msg", "doBackupTasks: becoming MASTER")
-			return HAMaster
+			return haMaster
 		}
 	}
 }
 
-func (n *Node) backupHandleAdvertisement(advert *advertisement) haState {
+func (n *haNode) backupHandleAdvertisement(advert *advertisement) haState {
 	switch {
 	case advert.VersionType != vrrpVersionType:
 		// Ignore
-		return HABackup
+		return haBackup
 
 	case advert.VRID != n.VRID:
 		ltsvlog.Logger.Info().String("msg", "backupHandleAdvertisement: ignoring Advertisement").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
-		return HABackup
+		return haBackup
 
 	case advert.Priority == 0:
 		ltsvlog.Logger.Info().String("msg", "backupHandleAdvertisement: peer priority is 0 - becoming MASTER")
-		return HAMaster
+		return haMaster
 
 	case n.Preempt && advert.Priority < n.Priority:
 		ltsvlog.Logger.Info().String("msg", "backupHandleAdvertisement: peer priority < my priority - becoming MASTER").Uint8("peerVRID", advert.VRID).Uint8("myVRID", n.VRID).Log()
-		return HAMaster
+		return haMaster
 	}
 
 	// Per RFC 5798, set the masterDownInterval based on the advert interval received from the
 	// current master.  AdvertInt is in centiseconds.
 	n.resetMasterDownInterval(time.Millisecond * time.Duration(10*advert.AdvertInt))
 	n.lastMasterAdvertTime = time.Now()
-	return HABackup
+	return haBackup
 }
 
-func (n *Node) queueAdvertisement(advert *advertisement) {
+func (n *haNode) queueAdvertisement(advert *advertisement) {
 	if queueLen := len(n.recvChannel); queueLen > 0 {
 		ltsvlog.Logger.Info().String("msg", "queueAdvertisement: advertisements already queued").Int("queueLen", queueLen).Log()
 	}
@@ -316,7 +316,7 @@ func (n *Node) queueAdvertisement(advert *advertisement) {
 	}
 }
 
-func (n *Node) sendAdvertisements() {
+func (n *haNode) sendAdvertisements() {
 	ticker := time.NewTicker(n.MasterAdvertInterval)
 	for {
 		// TODO(angusc): figure out how to make the timing-related logic here, and thoughout, clockjump
@@ -342,7 +342,7 @@ func (n *Node) sendAdvertisements() {
 
 		case newState := <-n.stopSenderChannel:
 			ticker.Stop()
-			if newState == HAShutdown {
+			if newState == haShutdown {
 				advert := n.newAdvertisement()
 				advert.Priority = 0
 				if err := n.conn.send(advert, time.Second); err != nil {
@@ -356,7 +356,7 @@ func (n *Node) sendAdvertisements() {
 	}
 }
 
-func (n *Node) receiveAdvertisements() {
+func (n *haNode) receiveAdvertisements() {
 	for {
 		if advert, err := n.conn.receive(); err != nil {
 			select {

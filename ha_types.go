@@ -5,19 +5,19 @@ import (
 	"time"
 )
 
-// haState indicates the High-Availability state of a Seesaw Node.
+// haState indicates the High-Availability state of a VRRP Node.
 type haState int
 
 const (
-	HAUnknown haState = iota
-	HABackup
-	HADisabled
-	HAError
-	HAMaster
-	HAShutdown
+	haUnkown haState = iota
+	haBackup
+	haDisabled
+	haError
+	haMaster
+	haShutdown
 )
 
-// haStatus indicates the High-Availability status for a Seesaw Node.
+// haStatus indicates the High-Availability status for a VRRP Node.
 type haStatus struct {
 	LastUpdate     time.Time
 	State          haState
@@ -28,9 +28,9 @@ type haStatus struct {
 	Transitions    uint64
 }
 
-// HAConfig represents the high availability configuration for a node in a
-// Seesaw cluster.
-type HAConfig struct {
+// haConfig represents the high availability configuration for a node in a
+// VRRP cluster.
+type haConfig struct {
 	Enabled    bool
 	LocalAddr  net.IP
 	RemoteAddr net.IP
@@ -38,8 +38,8 @@ type HAConfig struct {
 	VRID       uint8
 }
 
-// Equal reports whether this HAConfig is equal to the given HAConfig.
-func (h *HAConfig) Equal(other *HAConfig) bool {
+// Equal reports whether this HAConfig is equal to the given haConfig.
+func (h *haConfig) Equal(other *haConfig) bool {
 	return h.Enabled == other.Enabled &&
 		h.LocalAddr.Equal(other.LocalAddr) &&
 		h.RemoteAddr.Equal(other.RemoteAddr) &&

@@ -18,7 +18,7 @@ import (
 type LVS struct {
 	ipvs             libipvs.IPVSHandle
 	mu               sync.Mutex
-	vrrpNode         *Node
+	vrrpNode         *haNode
 	servicesAndDests *ServicesAndDests
 	checkers         *healthcheckers
 	checkResultC     chan healthcheckResult
@@ -195,7 +195,7 @@ func New(config *Config) (*LVS, error) {
 	}, nil
 }
 
-func newVRRPNode(vrrpCfg *ConfigVRRP) (*Node, error) {
+func newVRRPNode(vrrpCfg *ConfigVRRP) (*haNode, error) {
 	if !vrrpCfg.Enabled {
 		return nil, nil
 	}
@@ -218,7 +218,7 @@ func newVRRPNode(vrrpCfg *ConfigVRRP) (*Node, error) {
 			return fmt.Errorf("interface not found for name=%s, err=%v", vrrpCfg.VIPInterface, err)
 		}).String("vipInterface", vrrpCfg.VIPInterface).Stack("")
 	}
-	vipCfgs := make([]*VIPsHAConfigVIP, len(vrrpCfg.VIPs))
+	vipCfgs := make([]*haEngineVIPConfig, len(vrrpCfg.VIPs))
 	for i, vip := range vrrpCfg.VIPs {
 		ip, ipNet, err := net.ParseCIDR(vip)
 		if err != nil {
@@ -226,45 +226,45 @@ func newVRRPNode(vrrpCfg *ConfigVRRP) (*Node, error) {
 				return fmt.Errorf("failed to parse CIDR %s, err=%v", vip, err)
 			}).String("vip", vip).Stack("")
 		}
-		vipCfgs[i] = &VIPsHAConfigVIP{IP: ip, IPNet: ipNet}
+		vipCfgs[i] = &haEngineVIPConfig{ip: ip, ipNet: ipNet}
 	}
 
-	haConfig := HAConfig{
+	haCfg := haConfig{
 		Enabled:    true,
 		LocalAddr:  localAddr,
 		RemoteAddr: remoteAddr,
 		Priority:   vrrpCfg.Priority,
 		VRID:       vrrpCfg.VRID,
 	}
-	nc := NodeConfig{
-		HAConfig:             haConfig,
+	nc := haNodeConfig{
+		haConfig:             haCfg,
 		MasterAdvertInterval: vrrpCfg.MasterAdvertInterval,
 		Preempt:              vrrpCfg.Preempt,
 	}
 
-	conn, err := NewIPHAConn(localAddr, remoteAddr)
+	conn, err := newIPHAConn(localAddr, remoteAddr)
 	if err != nil {
 		return nil, err
 	}
 
-	engine := &VIPsUpdateEngine{
-		Config: &VIPsHAConfig{
-			HAConfig:     haConfig,
-			VIPInterface: vipIntf,
-			VIPs:         vipCfgs,
+	engine := &haEngine{
+		config: &haEngineConfig{
+			haConfig:     haCfg,
+			vipInterface: vipIntf,
+			vips:         vipCfgs,
 		},
 	}
 
-	node := NewNode(nc, conn, engine)
+	node := newHANode(nc, conn, engine)
 	return node, nil
 }
 
 func (l *LVS) ShutdownVRRPNode() {
-	l.vrrpNode.Shutdown()
+	l.vrrpNode.shutdown()
 }
 
 func (l *LVS) RunVRRPNode() {
-	l.vrrpNode.Run()
+	l.vrrpNode.run()
 }
 
 func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
