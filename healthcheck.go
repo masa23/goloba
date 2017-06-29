@@ -14,7 +14,7 @@ import (
 	"github.com/hnakamur/ltsvlog"
 )
 
-type HealthCheckerConfig struct {
+type healthcheckerConfig struct {
 	DestinationKey  string
 	Method          string
 	URL             string
@@ -26,29 +26,29 @@ type HealthCheckerConfig struct {
 	Interval        time.Duration
 }
 
-type CheckResult struct {
+type healthcheckResult struct {
 	DestinationKey string
 	OK             bool
 	Err            error
 }
 
-type Checkers struct {
-	checkers map[string]*Checker
+type healthcheckers struct {
+	checkers map[string]*healthchecker
 	mu       sync.Mutex
 }
 
-type Checker struct {
-	config *HealthCheckerConfig
+type healthchecker struct {
+	config *healthcheckerConfig
 	client *http.Client
 }
 
-func NewCheckers() *Checkers {
-	return &Checkers{
-		checkers: make(map[string]*Checker),
+func newHealthcheckers() *healthcheckers {
+	return &healthcheckers{
+		checkers: make(map[string]*healthchecker),
 	}
 }
 
-func (c *Checkers) AddAndStartChecker(ctx context.Context, config *HealthCheckerConfig, resultC chan<- CheckResult) {
+func (c *healthcheckers) startHealthchecker(ctx context.Context, config *healthcheckerConfig, resultC chan<- healthcheckResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -58,16 +58,16 @@ func (c *Checkers) AddAndStartChecker(ctx context.Context, config *HealthChecker
 		return
 	}
 
-	checker := NewChecker(config)
+	checker := newHealthchecker(config)
 	c.checkers[key] = checker
-	go checker.Run(ctx, resultC)
+	go checker.run(ctx, resultC)
 }
 
-func NewChecker(config *HealthCheckerConfig) *Checker {
-	return &Checker{config: config}
+func newHealthchecker(config *healthcheckerConfig) *healthchecker {
+	return &healthchecker{config: config}
 }
 
-func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
+func (c *healthchecker) run(ctx context.Context, resultC chan<- healthcheckResult) {
 	if ltsvlog.Logger.DebugEnabled() {
 		ltsvlog.Logger.Debug().String("msg", "Checker.Run").Sprintf("config", "%+v", c.config).Log()
 	}
@@ -88,7 +88,7 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 		select {
 		case <-ticker.C:
 			ok, err := c.check()
-			resultC <- CheckResult{
+			resultC <- healthcheckResult{
 				DestinationKey: c.config.DestinationKey,
 				OK:             ok,
 				Err:            err,
@@ -99,7 +99,7 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 	}
 }
 
-func (c *Checker) check() (bool, error) {
+func (c *healthchecker) check() (bool, error) {
 	if ltsvlog.Logger.DebugEnabled() {
 		ltsvlog.Logger.Debug().String("msg", "Checker.check").Sprintf("config", "%+v", c.config).Log()
 	}

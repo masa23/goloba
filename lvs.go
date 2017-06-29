@@ -21,8 +21,8 @@ type LVS struct {
 	mu               sync.Mutex
 	vrrpNode         *vrrp.Node
 	servicesAndDests *ServicesAndDests
-	checkers         *Checkers
-	checkResultC     chan CheckResult
+	checkers         *healthcheckers
+	checkResultC     chan healthcheckResult
 }
 
 type Config struct {
@@ -192,7 +192,7 @@ func New(config *Config) (*LVS, error) {
 	return &LVS{
 		ipvs:     ipvs,
 		vrrpNode: node,
-		checkers: NewCheckers(),
+		checkers: newHealthcheckers(),
 	}, nil
 }
 
@@ -457,7 +457,7 @@ func findConfigServer(config *Config, address string, port uint16) *ConfigServer
 
 func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
-	l.checkResultC = make(chan CheckResult, config.TotalServerCount())
+	l.checkResultC = make(chan healthcheckResult, config.TotalServerCount())
 	l.doUpdateCheckers(ctx, config)
 	l.mu.Unlock()
 
@@ -474,7 +474,7 @@ func (l *LVS) RunHealthCheckLoop(ctx context.Context, config *Config) {
 	}
 }
 
-func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, result *CheckResult) error {
+func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, result *healthcheckResult) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -537,7 +537,7 @@ func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
 				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", server.Address).Uint16("serverPort", server.Port).Log()
 			}
 			destKey := destinationKey(net.ParseIP(lvs.Address), lvs.Port, net.ParseIP(server.Address), server.Port)
-			cfg := &HealthCheckerConfig{
+			cfg := &healthcheckerConfig{
 				DestinationKey: destKey,
 				Method:         http.MethodGet,
 				URL:            c.URL,
@@ -552,7 +552,7 @@ func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
 				Timeout:  c.Timeout,
 				Interval: c.Interval,
 			}
-			l.checkers.AddAndStartChecker(ctx, cfg, l.checkResultC)
+			l.checkers.startHealthchecker(ctx, cfg, l.checkResultC)
 		}
 	}
 }
