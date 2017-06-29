@@ -56,7 +56,7 @@ type haNodeConfig struct {
 type haNode struct {
 	haNodeConfig
 	conn                 haConn
-	engine               engine
+	engine               *haEngine
 	statusLock           sync.RWMutex
 	haStatus             haStatus
 	sendCount            uint64
@@ -68,8 +68,8 @@ type haNode struct {
 	stopSenderChannel    chan haState
 }
 
-// newHANode creates a new Node with the given NodeConfig and HAConn.
-func newHANode(cfg haNodeConfig, conn haConn, eng engine) *haNode {
+// newHANode creates a new Node with the given NodeConfig and haConn.
+func newHANode(cfg haNodeConfig, conn haConn, eng *haEngine) *haNode {
 	n := &haNode{
 		haNodeConfig:         cfg,
 		conn:                 conn,

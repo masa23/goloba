@@ -10,11 +10,6 @@ import (
 	"github.com/hnakamur/netutil"
 )
 
-// engine represents an interface to a vrrp engine.
-type engine interface {
-	HAState(haState) error
-}
-
 // haEngineConfig represents the high availability configuration for a node in a
 // VRRP cluster.
 type haEngineConfig struct {
