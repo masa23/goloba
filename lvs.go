@@ -40,6 +40,7 @@ type VRRPConfig struct {
 	RemoteAddress        string        `yaml:"remote_address"`
 	Preempt              bool          `yaml:"preempt"`
 	MasterAdvertInterval time.Duration `yaml:"master_advert_interval"`
+	SendGARPInterval     time.Duration `yaml:"send_garp_interval"`
 	VIPInterface         string        `yaml:"vip_interface"`
 	VIPs                 []string      `yaml:"vips"`
 }
@@ -251,9 +252,10 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 
 	engine := &haEngine{
 		config: &haEngineConfig{
-			haConfig:     haCfg,
-			vipInterface: vipIntf,
-			vips:         vipCfgs,
+			haConfig:         haCfg,
+			sendGARPInterval: vrrpCfg.SendGARPInterval,
+			vipInterface:     vipIntf,
+			vips:             vipCfgs,
 		},
 	}
 

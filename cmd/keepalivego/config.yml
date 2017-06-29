@@ -1,4 +1,4 @@
-logfile: ./daemon.log
+logfile: /tmp/keepalivego.log
 enable_debug_log: False
 vrrp:
   enabled: True
@@ -7,9 +7,11 @@ vrrp:
   local_address: 192.168.122.247
   remote_address: 192.168.122.141
   master_advert_interval: 500ms
+  send_garp_interval: 1s
   vip_interface: eth0
   vips:
     - 192.168.122.2/32
+    - 192.168.122.3/32
 lvs:
 - name: http
   address:  192.168.122.2

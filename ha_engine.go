@@ -14,8 +14,9 @@ import (
 // VRRP cluster.
 type haEngineConfig struct {
 	haConfig
-	vipInterface *net.Interface
-	vips         []*haEngineVIPConfig
+	sendGARPInterval time.Duration
+	vipInterface     *net.Interface
+	vips             []*haEngineVIPConfig
 }
 
 type haEngineVIPConfig struct {
@@ -72,7 +73,7 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 			var ctx context.Context
 			ctx, vipCfg.cancel = context.WithCancel(context.TODO())
 			ltsvlog.Logger.Info().String("msg", "before go sendGARPLoop").Stringer("vip", vipCfg.ip).Log()
-			go sendGARPLoop(ctx, c.vipInterface, vipCfg.ip)
+			go e.sendGARPLoop(ctx, c.vipInterface, vipCfg.ip)
 		}
 	} else {
 		if hasVIP {
@@ -99,8 +100,8 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 	return nil
 }
 
-func sendGARPLoop(ctx context.Context, intf *net.Interface, vip net.IP) {
-	ticker := time.NewTicker(time.Second)
+func (e *haEngine) sendGARPLoop(ctx context.Context, intf *net.Interface, vip net.IP) {
+	ticker := time.NewTicker(e.config.sendGARPInterval)
 	defer ticker.Stop()
 	for {
 		select {
