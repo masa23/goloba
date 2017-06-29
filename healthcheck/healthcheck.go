@@ -73,7 +73,7 @@ func (c *Checker) Run(ctx context.Context, resultC chan<- CheckResult) {
 	}
 	c.client = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return errors.New("no direct allowed for healthcheck")
+			return errors.New("no redirect allowed for healthcheck")
 		},
 		Timeout: c.config.Timeout,
 		Transport: &http.Transport{
