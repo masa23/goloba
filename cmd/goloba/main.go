@@ -12,7 +12,7 @@ import (
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
-	"github.com/masa23/keepalivego"
+	"github.com/masa23/goloba"
 )
 
 func main() {
