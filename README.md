@@ -1,4 +1,4 @@
-# goloba
+# goloba [![Build Status](https://travis-ci.org/masa23/goloba.png)](https://travis-ci.org/masa23/goloba) [![Go Report Card](https://goreportcard.com/badge/github.com/masa23/goloba)](https://goreportcard.com/report/github.com/masa23/goloba) [![GoDoc](https://godoc.org/github.com/masa23/goloba?status.svg)](https://godoc.org/github.com/masa23/goloba) [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](https://raw.githubusercontent.com/hyperium/hyper/master/LICENSE) 
 
 A layer 4 load balancer written in Go.
 
