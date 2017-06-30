@@ -1,7 +1,8 @@
-# keepalivego
+# goloba
 
+A layer 4 load balancer written in Go.
 
-## ToDo
+## Features
 
 * lvs contorol 
 * hearthcheck 
