@@ -264,16 +264,18 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 }
 
 func (l *LoadBalancer) Run(ctx context.Context) error {
-	err := l.ReloadConfig(ctx, l.config)
+	err := l.reloadConfig(ctx, l.config)
 	if err != nil {
 		return err
 	}
-	go l.runHealthCheckLoop(ctx, l.config)
-	l.vrrpNode.run(ctx)
+	if l.vrrpNode != nil {
+		go l.vrrpNode.run(ctx)
+	}
+	l.runHealthCheckLoop(ctx, l.config)
 	return nil
 }
 
-func (l *LoadBalancer) ReloadConfig(ctx context.Context, config *Config) error {
+func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
