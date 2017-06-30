@@ -27,7 +27,7 @@ func main() {
 		}).String("configFile", configfile).Stack(""))
 		os.Exit(1)
 	}
-	var conf keepalivego.Config
+	var conf goloba.Config
 	err = yaml.Unmarshal(buf, &conf)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
@@ -47,13 +47,13 @@ func main() {
 	defer logFile.Close()
 	ltsvlog.Logger = ltsvlog.NewLTSVLogger(logFile, conf.EnableDebugLog)
 
-	ltsvlog.Logger.Info().String("msg", "Start keepalivego!").Log()
+	ltsvlog.Logger.Info().String("msg", "Start goloba!").Log()
 
 	if ltsvlog.Logger.DebugEnabled() {
 		ltsvlog.Logger.Debug().Sprintf("config", "%+v", conf).Log()
 	}
 
-	lvs, err := keepalivego.New(&conf)
+	lvs, err := goloba.New(&conf)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to create LVS, err=%v", err)

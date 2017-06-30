@@ -1,4 +1,4 @@
-package keepalivego
+package goloba
 
 import (
 	"context"
