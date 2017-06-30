@@ -1,4 +1,6 @@
-package vrrp
+// +build linux
+
+package netutil
 
 import (
 	"net"
@@ -6,28 +8,13 @@ import (
 	"unsafe"
 )
 
-func HasAddr(intf *net.Interface, ip net.IP) (bool, error) {
-	addrs, err := intf.Addrs()
-	if err != nil {
-		return false, err
-	}
-	for _, addr := range addrs {
-		i, _, err := net.ParseCIDR(addr.String())
-		if err != nil {
-			return false, err
-		}
-		if i.Equal(ip) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
+// AddAddr adds the specified IP address to the interface.
 func AddAddr(intf *net.Interface, ip net.IP, ipNet *net.IPNet, label string) error {
 	return addOrDelAddr(intf.Index, syscall.RTM_NEWADDR, ip, ipNet, label,
 		syscall.NLM_F_CREATE|syscall.NLM_F_EXCL|syscall.NLM_F_ACK)
 }
 
+// DelAddr deletes the specified IP address from the interface.
 func DelAddr(intf *net.Interface, ip net.IP, ipNet *net.IPNet) error {
 	return addOrDelAddr(intf.Index, syscall.RTM_DELADDR, ip, ipNet, "",
 		syscall.NLM_F_ACK)

@@ -1,4 +1,4 @@
-logfile: ./daemon.log
+logfile: /tmp/keepalivego.log
 enable_debug_log: False
 vrrp:
   enabled: True
@@ -7,16 +7,18 @@ vrrp:
   local_address: 192.168.122.247
   remote_address: 192.168.122.141
   master_advert_interval: 500ms
+  send_garp_interval: 1s
   vip_interface: eth0
   vips:
     - 192.168.122.2/32
-lvs:
+    - 192.168.122.3/32
+services:
 - name: http
   address:  192.168.122.2
   port: 80
   schedule: wrr
   type: dr
-  servers:
+  destinations:
     - address: 192.168.122.62
       port: 80
       weight: 100
@@ -40,7 +42,7 @@ lvs:
   port: 443
   schedule: wrr
   type: nat
-  servers:
+  destinations:
     - address: 192.168.122.62
       port: 443
       weight: 10

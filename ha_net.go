@@ -1,4 +1,4 @@
-package vrrp
+package keepalivego
 
 import (
 	"bytes"
@@ -28,9 +28,9 @@ type ipv6PseudoHeader struct {
 	NextHeader uint8
 }
 
-// IPConn creates a net.IPConn using the given local and remote addresses using IP protocol
+// ipConn creates a net.ipConn using the given local and remote addresses using IP protocol
 // 112 (VRRP).
-func IPConn(localAddr, remoteAddr net.IP) (*net.IPConn, error) {
+func ipConn(localAddr, remoteAddr net.IP) (*net.IPConn, error) {
 	c, err := net.ListenIP(fmt.Sprintf("ip:%d", vrrpPort), &net.IPAddr{IP: localAddr})
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
@@ -111,17 +111,17 @@ func setsockopt(f *os.File, level, opt, value int) error {
 	return nil
 }
 
-// IPHAConn implements the HAConn interface.
-type IPHAConn struct {
+// ipHAConn is a high availability connection.
+type ipHAConn struct {
 	sendConn *net.IPConn
 	recvConn *net.IPConn
 	laddr    net.IP
 	raddr    net.IP
 }
 
-// NewIPHAConn creates a new IPHAConn.
-func NewIPHAConn(laddr, raddr net.IP) (HAConn, error) {
-	sendConn, err := IPConn(laddr, raddr)
+// newIPHAConn creates a new ipHAConn.
+func newIPHAConn(laddr, raddr net.IP) (*ipHAConn, error) {
+	sendConn, err := ipConn(laddr, raddr)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +147,7 @@ func NewIPHAConn(laddr, raddr net.IP) (HAConn, error) {
 		}
 	}
 
-	return &IPHAConn{
+	return &ipHAConn{
 		sendConn: sendConn,
 		recvConn: recvConn,
 		laddr:    laddr,
@@ -229,7 +229,7 @@ func findInterface(laddr net.IP) (*net.Interface, error) {
 }
 
 // af returns the address family for an IPHAConn.
-func (c *IPHAConn) af() int {
+func (c *ipHAConn) af() int {
 	if c.laddr.To4() != nil {
 		return syscall.AF_INET
 	}
@@ -239,7 +239,7 @@ func (c *IPHAConn) af() int {
 // receive reads an IP packet from the IP layer and translates it into an advertisement.
 // receive blocks until either an advertisement is received or an error occurs.  If the
 // error is a recoverable/ignorable error, receive will return (nil, nil).
-func (c *IPHAConn) receive() (*advertisement, error) {
+func (c *ipHAConn) receive() (*advertisement, error) {
 	p, err := c.readPacket()
 	if err != nil {
 		switch err := err.(type) {
@@ -312,7 +312,7 @@ var (
 )
 
 // readPacket reads a packet from this IPHAConn's recvConn.
-func (c *IPHAConn) readPacket() (*packet, error) {
+func (c *ipHAConn) readPacket() (*packet, error) {
 	switch c.af() {
 	case syscall.AF_INET:
 		return c.readIPv4Packet()
@@ -325,7 +325,7 @@ func (c *IPHAConn) readPacket() (*packet, error) {
 // readIPv4Packet reads an IPv4 packet. For IPv4, Read() includes the IP
 // header, so the TTL, source and destination addresses directly are read
 // directly from the header.
-func (c *IPHAConn) readIPv4Packet() (*packet, error) {
+func (c *ipHAConn) readIPv4Packet() (*packet, error) {
 	b := recvBuffer
 	n, err := c.recvConn.Read(b)
 	if err != nil {
@@ -352,7 +352,7 @@ func (c *IPHAConn) readIPv4Packet() (*packet, error) {
 // include the IP header, so the HOPLIMIT and destination address are read from
 // the control message data (see RFCs 3542 and 2292). The source address is
 // taken from the ReadMsgIP return values.
-func (c *IPHAConn) readIPv6Packet() (*packet, error) {
+func (c *ipHAConn) readIPv6Packet() (*packet, error) {
 	b := recvBuffer
 	oob := oobBuffer
 	n, oobn, _, raddr, err := c.recvConn.ReadMsgIP(b, oob)
@@ -400,7 +400,7 @@ func (c *IPHAConn) readIPv6Packet() (*packet, error) {
 }
 
 // send translates an advertisement into a []byte and passes it to the IP layer for delivery.
-func (c *IPHAConn) send(advert *advertisement, timeout time.Duration) error {
+func (c *ipHAConn) send(advert *advertisement, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	if err := c.sendConn.SetWriteDeadline(deadline); err != nil {
 		return err
