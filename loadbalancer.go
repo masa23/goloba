@@ -15,7 +15,7 @@ import (
 	"github.com/mqliang/libipvs"
 )
 
-type LVS struct {
+type LoadBalancer struct {
 	ipvs             libipvs.IPVSHandle
 	mu               sync.Mutex
 	vrrpNode         *haNode
@@ -26,10 +26,10 @@ type LVS struct {
 }
 
 type Config struct {
-	LogFile        string      `yaml:"logfile"`
-	EnableDebugLog bool        `yaml:"enable_debug_log"`
-	VRRP           VRRPConfig  `yaml:"vrrp"`
-	LVS            []LVSConfig `yaml:"lvs"`
+	LogFile        string          `yaml:"logfile"`
+	EnableDebugLog bool            `yaml:"enable_debug_log"`
+	VRRP           VRRPConfig      `yaml:"vrrp"`
+	Services       []ServiceConfig `yaml:"services"`
 }
 
 type VRRPConfig struct {
@@ -45,16 +45,16 @@ type VRRPConfig struct {
 	VIPs                 []string      `yaml:"vips"`
 }
 
-type LVSConfig struct {
-	Name     string         `yaml:"name"`
-	Port     uint16         `yaml:"port"`
-	Address  string         `yaml:"address"`
-	Schedule string         `yaml:"schedule"`
-	Type     string         `yaml:"type"`
-	Servers  []ServerConfig `yaml:"servers"`
+type ServiceConfig struct {
+	Name         string              `yaml:"name"`
+	Port         uint16              `yaml:"port"`
+	Address      string              `yaml:"address"`
+	Schedule     string              `yaml:"schedule"`
+	Type         string              `yaml:"type"`
+	Destinations []DestinationConfig `yaml:"destinations"`
 }
 
-type ServerConfig struct {
+type DestinationConfig struct {
 	Port        uint16            `yaml:"port"`
 	Address     string            `yaml:"address"`
 	Weight      uint32            `yaml:"weight"`
@@ -88,19 +88,19 @@ type ipvsDestination struct {
 
 var ErrInvalidIP = errors.New("invalid IP address")
 
-func (c *Config) findLVS(addr string, port uint16) *LVSConfig {
-	for _, lvs := range c.LVS {
-		if lvs.Address == addr && lvs.Port == port {
-			return &lvs
+func (c *Config) findLVS(addr string, port uint16) *ServiceConfig {
+	for _, s := range c.Services {
+		if s.Address == addr && s.Port == port {
+			return &s
 		}
 	}
 	return nil
 }
 
-func (c *LVSConfig) findServer(addr string, port uint16) *ServerConfig {
-	for _, s := range c.Servers {
-		if s.Address == addr && s.Port == port {
-			return &s
+func (c *ServiceConfig) findServer(addr string, port uint16) *DestinationConfig {
+	for _, d := range c.Destinations {
+		if d.Address == addr && d.Port == port {
+			return &d
 		}
 	}
 	return nil
@@ -171,13 +171,13 @@ func listServicesAndDests(h libipvs.IPVSHandle) (*ipvsServicesAndDests, error) {
 
 func (c *Config) totalServiceCount() int {
 	cnt := 0
-	for _, lvs := range c.LVS {
-		cnt += len(lvs.Servers)
+	for _, lvs := range c.Services {
+		cnt += len(lvs.Destinations)
 	}
 	return cnt
 }
 
-func New(config *Config) (*LVS, error) {
+func New(config *Config) (*LoadBalancer, error) {
 	ipvs, err := libipvs.New()
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
@@ -190,7 +190,7 @@ func New(config *Config) (*LVS, error) {
 		return nil, err
 	}
 
-	return &LVS{
+	return &LoadBalancer{
 		config:   config,
 		ipvs:     ipvs,
 		vrrpNode: node,
@@ -263,7 +263,7 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 	return node, nil
 }
 
-func (l *LVS) Run(ctx context.Context) error {
+func (l *LoadBalancer) Run(ctx context.Context) error {
 	err := l.ReloadConfig(ctx, l.config)
 	if err != nil {
 		return err
@@ -273,7 +273,7 @@ func (l *LVS) Run(ctx context.Context) error {
 	return nil
 }
 
-func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
+func (l *LoadBalancer) ReloadConfig(ctx context.Context, config *Config) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -285,7 +285,7 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 	}
 
 	// 配信をなるべく止めたくないので、libipvs.Serverとlibipvs.Destinationの追加・更新を先に行う。
-	for _, serviceConf := range config.LVS {
+	for _, serviceConf := range config.Services {
 		ipAddr := net.ParseIP(serviceConf.Address)
 		if ipAddr == nil {
 			return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
@@ -335,17 +335,17 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 			fwd = libipvs.IP_VS_CONN_F_MASQ
 		}
 
-		for _, serverConf := range serviceConf.Servers {
-			serverIP := net.ParseIP(serverConf.Address)
+		for _, destConf := range serviceConf.Destinations {
+			serverIP := net.ParseIP(destConf.Address)
 			if serverIP == nil {
 				return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
 					return fmt.Errorf("invalid serverervice IP address, err=%v", err)
-				}).String("address", serverConf.Address).Stack("")
+				}).String("address", destConf.Address).Stack("")
 			}
 
 			var dest *ipvsDestination
 			if serviceAndDests != nil {
-				dest = serviceAndDests.findDestination(serverConf.Address, serverConf.Port)
+				dest = serviceAndDests.findDestination(destConf.Address, destConf.Port)
 			}
 
 			if dest == nil {
@@ -353,32 +353,32 @@ func (l *LVS) ReloadConfig(ctx context.Context, config *Config) error {
 				destination := &libipvs.Destination{
 					Address:       serverIP,
 					AddressFamily: family,
-					Port:          serverConf.Port,
+					Port:          destConf.Port,
 					FwdMethod:     fwd,
-					Weight:        serverConf.Weight,
+					Weight:        destConf.Weight,
 				}
 				err := l.ipvs.NewDestination(service, destination)
 				if err != nil {
 					return ltsvlog.WrapErr(err, func(err error) error {
 						return fmt.Errorf("faild create ipvs destination, err=%s", err)
-					}).String("address", serverConf.Address).
-						Uint16("port", serverConf.Port).
+					}).String("address", destConf.Address).
+						Uint16("port", destConf.Port).
 						String("fwdMethod", serviceConf.Type).
-						Uint32("weight", serverConf.Weight).Stack("")
+						Uint32("weight", destConf.Weight).Stack("")
 				}
 			} else {
 				destination := dest.destination
-				if fwd != destination.FwdMethod || serverConf.Weight != destination.Weight {
+				if fwd != destination.FwdMethod || destConf.Weight != destination.Weight {
 					destination.FwdMethod = fwd
-					destination.Weight = serverConf.Weight
+					destination.Weight = destConf.Weight
 					err := l.ipvs.UpdateDestination(service, destination)
 					if err != nil {
 						return ltsvlog.WrapErr(err, func(err error) error {
 							return fmt.Errorf("faild update ipvs destination, err=%s", err)
-						}).String("address", serverConf.Address).
-							Uint16("port", serverConf.Port).
+						}).String("address", destConf.Address).
+							Uint16("port", destConf.Port).
 							String("fwdMethod", serviceConf.Type).
-							Uint32("weight", serverConf.Weight).Stack("")
+							Uint32("weight", destConf.Weight).Stack("")
 					}
 				}
 			}
@@ -450,9 +450,9 @@ func ipAddressFamily(ip net.IP) int {
 	}
 }
 
-func findConfigServer(config *Config, address string, port uint16) *ServerConfig {
-	for _, lvs := range config.LVS {
-		for _, server := range lvs.Servers {
+func findConfigServer(config *Config, address string, port uint16) *DestinationConfig {
+	for _, lvs := range config.Services {
+		for _, server := range lvs.Destinations {
 			if server.Address == address && server.Port == port {
 				return &server
 			}
@@ -461,7 +461,7 @@ func findConfigServer(config *Config, address string, port uint16) *ServerConfig
 	return nil
 }
 
-func (l *LVS) runHealthCheckLoop(ctx context.Context, config *Config) {
+func (l *LoadBalancer) runHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
 	l.checkResultC = make(chan healthcheckResult, config.totalServiceCount())
 	l.doUpdateCheckers(ctx, config)
@@ -480,7 +480,7 @@ func (l *LVS) runHealthCheckLoop(ctx context.Context, config *Config) {
 	}
 }
 
-func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, result *healthcheckResult) error {
+func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Config, result *healthcheckResult) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -535,14 +535,14 @@ func (l *LVS) attachOrDetachDestination(ctx context.Context, config *Config, res
 	return nil
 }
 
-func (l *LVS) doUpdateCheckers(ctx context.Context, config *Config) {
-	for _, lvs := range config.LVS {
-		for _, server := range lvs.Servers {
-			c := server.HealthCheck
+func (l *LoadBalancer) doUpdateCheckers(ctx context.Context, config *Config) {
+	for _, serviceConf := range config.Services {
+		for _, destConf := range serviceConf.Destinations {
+			c := destConf.HealthCheck
 			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", server.Address).Uint16("serverPort", server.Port).Log()
+				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", destConf.Address).Uint16("serverPort", destConf.Port).Log()
 			}
-			destKey := destinationKey(net.ParseIP(lvs.Address), lvs.Port, net.ParseIP(server.Address), server.Port)
+			destKey := destinationKey(net.ParseIP(serviceConf.Address), serviceConf.Port, net.ParseIP(destConf.Address), destConf.Port)
 			cfg := &healthcheckerConfig{
 				DestinationKey: destKey,
 				Method:         http.MethodGet,

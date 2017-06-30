@@ -12,13 +12,13 @@ vrrp:
   vips:
     - 192.168.122.2/32
     - 192.168.122.3/32
-lvs:
+services:
 - name: http
   address:  192.168.122.2
   port: 80
   schedule: wrr
   type: dr
-  servers:
+  destinations:
     - address: 192.168.122.62
       port: 80
       weight: 100
@@ -42,7 +42,7 @@ lvs:
   port: 443
   schedule: wrr
   type: nat
-  servers:
+  destinations:
     - address: 192.168.122.62
       port: 443
       weight: 10
