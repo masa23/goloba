@@ -10,8 +10,8 @@
 [[projects]]
   name = "github.com/hnakamur/ltsvlog"
   packages = ["."]
-  revision = "ce881e4d09d8a7c9925810f379fa84d7d4e23f69"
-  version = "v2.0.3"
+  revision = "16d09ed0480d32c289a338ae10bd179b46a8bcaa"
+  version = "v2.0.4"
 
 [[projects]]
   branch = "master"

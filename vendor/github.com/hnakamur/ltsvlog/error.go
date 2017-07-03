@@ -101,6 +101,17 @@ func (e *Error) Bytes(label string, value []byte) *Error {
 	return e
 }
 
+// Fmt appends a labeled formatted string value to Event.
+func (e *Error) Fmt(label, format string, a ...interface{}) *Error {
+	e.buf = append(e.buf, '\t')
+	e.buf = append(e.buf, label...)
+	e.buf = append(e.buf, ':')
+	e.buf = append(e.buf, escape(fmt.Sprintf(format, a...))...)
+	return e
+}
+
+// DEPRECATED: Use Fmt instead.
+//
 // Sprintf appends a labeled formatted string value to Error.
 func (e *Error) Sprintf(label, format string, a ...interface{}) *Error {
 	e.buf = append(e.buf, '\t')
