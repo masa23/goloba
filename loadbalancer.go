@@ -15,6 +15,7 @@ import (
 	"github.com/mqliang/libipvs"
 )
 
+// LoadBalancer is the load balancer.
 type LoadBalancer struct {
 	ipvs             libipvs.IPVSHandle
 	mu               sync.Mutex
@@ -25,6 +26,7 @@ type LoadBalancer struct {
 	config           *Config
 }
 
+// Config is the configuration object for the load balancer.
 type Config struct {
 	LogFile        string          `yaml:"logfile"`
 	EnableDebugLog bool            `yaml:"enable_debug_log"`
@@ -32,6 +34,7 @@ type Config struct {
 	Services       []ServiceConfig `yaml:"services"`
 }
 
+// VRRPConfig is the configuration about VRRP.
 type VRRPConfig struct {
 	Enabled              bool          `yaml:"enabled"`
 	VRID                 uint8         `yaml:"vrid"`
@@ -45,6 +48,7 @@ type VRRPConfig struct {
 	VIPs                 []string      `yaml:"vips"`
 }
 
+// ServiceConfig is the configuration on the service.
 type ServiceConfig struct {
 	Name         string              `yaml:"name"`
 	Port         uint16              `yaml:"port"`
@@ -54,6 +58,7 @@ type ServiceConfig struct {
 	Destinations []DestinationConfig `yaml:"destinations"`
 }
 
+// DestinationConfig is the configuration about the destination.
 type DestinationConfig struct {
 	Port        uint16            `yaml:"port"`
 	Address     string            `yaml:"address"`
@@ -61,6 +66,7 @@ type DestinationConfig struct {
 	HealthCheck HealthCheckConfig `yaml:"health_check"`
 }
 
+// HealthCheckConfig is the configuration about the health check.
 type HealthCheckConfig struct {
 	URL             string        `yaml:"url"`
 	HostHeader      string        `yaml:"host_header"`
@@ -86,6 +92,7 @@ type ipvsDestination struct {
 	service     *libipvs.Service
 }
 
+// ErrInvalidIP is the error which is returned when an IP address is invalid.
 var ErrInvalidIP = errors.New("invalid IP address")
 
 func (c *Config) findLVS(addr string, port uint16) *ServiceConfig {
@@ -177,6 +184,7 @@ func (c *Config) totalServiceCount() int {
 	return cnt
 }
 
+// New returns a new load balancer.
 func New(config *Config) (*LoadBalancer, error) {
 	ipvs, err := libipvs.New()
 	if err != nil {
@@ -263,6 +271,7 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 	return node, nil
 }
 
+// Run runs a load balancer.
 func (l *LoadBalancer) Run(ctx context.Context) error {
 	err := l.reloadConfig(ctx, l.config)
 	if err != nil {
@@ -447,9 +456,8 @@ func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 func ipAddressFamily(ip net.IP) int {
 	if ip.To4() != nil {
 		return syscall.AF_INET
-	} else {
-		return syscall.AF_INET6
 	}
+	return syscall.AF_INET6
 }
 
 func findConfigServer(config *Config, address string, port uint16) *DestinationConfig {
