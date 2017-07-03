@@ -196,7 +196,7 @@ func (n *haNode) becomeShutdown() {
 
 	if n.state() == haMaster {
 		n.stopSenderChannel <- haShutdown
-		// Sleep for a moment so sendAdvertisements() has a chance to send the shutdown advertisment.
+		// Sleep for a moment so sendAdvertisements() has a chance to send the shutdown advertisement.
 		time.Sleep(500 * time.Millisecond)
 	}
 	n.setState(haShutdown)
@@ -257,7 +257,7 @@ func (n *haNode) doBackupTasks(ctx context.Context) haState {
 		return haError
 
 	case <-timeout:
-		ltsvlog.Logger.Info().String("msg", "doBackupTasks: timed out waiting for Advertisement").Stringer("remaing", remaining).Log()
+		ltsvlog.Logger.Info().String("msg", "doBackupTasks: timed out waiting for Advertisement").Stringer("remaining", remaining).Log()
 		select {
 		case advert := <-n.recvChannel:
 			ltsvlog.Logger.Info().String("msg", "doBackupTasks: found Advertisement queued for processing")
@@ -309,7 +309,7 @@ func (n *haNode) queueAdvertisement(advert *advertisement) {
 func (n *haNode) sendAdvertisements() {
 	ticker := time.NewTicker(n.MasterAdvertInterval)
 	for {
-		// TODO(angusc): figure out how to make the timing-related logic here, and thoughout, clockjump
+		// TODO(angusc): figure out how to make the timing-related logic here, and throughout, clockjump
 		// safe.
 		select {
 		case <-ticker.C:
