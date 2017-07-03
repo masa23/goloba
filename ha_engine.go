@@ -56,7 +56,7 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 
 	if state == haMaster {
 		if hasVIP {
-			ltsvlog.Logger.Info().String("msg", "HAState called but already aquired VIP").Sprintf("state", "%v", state).
+			ltsvlog.Logger.Info().String("msg", "HAState called but already acquired VIP").Sprintf("state", "%v", state).
 				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
 				Stringer("mask", vipCfg.ipNet.Mask).Log()
 		} else {
