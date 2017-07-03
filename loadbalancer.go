@@ -441,7 +441,7 @@ func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 		})
 	}
 	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "lvs.New").Sprintf("servicesAndDests", "%+v", servicesAndDests).Log()
+		ltsvlog.Logger.Debug().String("msg", "lvs.New").Fmt("servicesAndDests", "%+v", servicesAndDests).Log()
 	}
 	l.servicesAndDests = servicesAndDests
 
@@ -495,14 +495,14 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 	defer l.mu.Unlock()
 
 	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Sprintf("result", "%+v", result).Log()
+		ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Fmt("result", "%+v", result).Log()
 	}
 
 	dest := l.servicesAndDests.findDestination(result.DestinationKey)
 	service := dest.service
 	destination := dest.destination
 	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "after findDestination").Sprintf("service", "%+v", service).Sprintf("destination", "%+v", destination).Log()
+		ltsvlog.Logger.Debug().String("msg", "after findDestination").Fmt("service", "%+v", service).Fmt("destination", "%+v", destination).Log()
 	}
 	if result.OK && result.Err == nil {
 		c := findConfigServer(config, destination.Address.String(), destination.Port)

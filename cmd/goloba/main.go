@@ -50,7 +50,7 @@ func main() {
 	ltsvlog.Logger.Info().String("msg", "Start goloba!").Log()
 
 	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().Sprintf("config", "%+v", conf).Log()
+		ltsvlog.Logger.Debug().Fmt("config", "%+v", conf).Log()
 	}
 
 	lvs, err := goloba.New(&conf)

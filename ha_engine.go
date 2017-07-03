@@ -34,7 +34,7 @@ type haEngine struct {
 func (e *haEngine) HAState(state haState) error {
 	c := e.config
 	for i, vipCfg := range c.vips {
-		ltsvlog.Logger.Info().String("msg", "before updateHAStateForVIP").Int("i", i).Sprintf("vipCfg", "%+v", vipCfg).Log()
+		ltsvlog.Logger.Info().String("msg", "before updateHAStateForVIP").Int("i", i).Fmt("vipCfg", "%+v", vipCfg).Log()
 		err := e.updateHAStateForVIP(state, vipCfg)
 		if err != nil {
 			// 1つのVIPの追加・削除に失敗しても他のVIPの追加・削除は行いたいので
@@ -56,7 +56,7 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 
 	if state == haMaster {
 		if hasVIP {
-			ltsvlog.Logger.Info().String("msg", "HAState called but already acquired VIP").Sprintf("state", "%v", state).
+			ltsvlog.Logger.Info().String("msg", "HAState called but already acquired VIP").Fmt("state", "%v", state).
 				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
 				Stringer("mask", vipCfg.ipNet.Mask).Log()
 		} else {
@@ -85,7 +85,7 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 					Stringer("mask", vipCfg.ipNet.Mask).Stack("")
 			}
 		} else {
-			ltsvlog.Logger.Info().String("msg", "HAState called but already released VIP").Sprintf("state", "%v", state).
+			ltsvlog.Logger.Info().String("msg", "HAState called but already released VIP").Fmt("state", "%v", state).
 				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
 				Stringer("mask", vipCfg.ipNet.Mask).Log()
 			return nil
@@ -94,7 +94,7 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 			vipCfg.cancel()
 		}
 	}
-	ltsvlog.Logger.Info().String("msg", "HAState updated").Sprintf("state", "%v", state).
+	ltsvlog.Logger.Info().String("msg", "HAState updated").Fmt("state", "%v", state).
 		String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
 		Stringer("mask", vipCfg.ipNet.Mask).Log()
 	return nil
