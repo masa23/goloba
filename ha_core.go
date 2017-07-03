@@ -85,7 +85,7 @@ func (n *haNode) resetMasterDownInterval(advertInterval time.Duration) {
 	if masterDownInterval != n.masterDownInterval {
 		n.masterDownInterval = masterDownInterval
 		if ltsvlog.Logger.DebugEnabled() {
-			ltsvlog.Logger.Debug().String("msg", "resetMasterDownInterval").Sprintf("skewTime", "%v", skewTime).Sprintf("masterDownInterval", "%v", masterDownInterval).Log()
+			ltsvlog.Logger.Debug().String("msg", "resetMasterDownInterval").Fmt("skewTime", "%v", skewTime).Fmt("masterDownInterval", "%v", masterDownInterval).Log()
 		}
 	}
 }

@@ -69,7 +69,7 @@ func newHealthchecker(config *healthcheckerConfig) *healthchecker {
 
 func (c *healthchecker) run(ctx context.Context, resultC chan<- healthcheckResult) {
 	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "Checker.Run").Sprintf("config", "%+v", c.config).Log()
+		ltsvlog.Logger.Debug().String("msg", "Checker.Run").Fmt("config", "%+v", c.config).Log()
 	}
 	c.client = &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -101,7 +101,7 @@ func (c *healthchecker) run(ctx context.Context, resultC chan<- healthcheckResul
 
 func (c *healthchecker) check() (bool, error) {
 	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "Checker.check").Sprintf("config", "%+v", c.config).Log()
+		ltsvlog.Logger.Debug().String("msg", "Checker.check").Fmt("config", "%+v", c.config).Log()
 	}
 	req, err := http.NewRequest(c.config.Method, c.config.URL, nil)
 	if err != nil {

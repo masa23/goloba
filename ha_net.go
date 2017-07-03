@@ -43,7 +43,6 @@ func ipConn(localAddr, remoteAddr net.IP) (*net.IPConn, error) {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("fail to get file from connection, err=%v", err)
 		}).Stringer("localAddr", localAddr).Stack("")
-		return nil, err
 	}
 	defer f.Close()
 
@@ -269,25 +268,25 @@ func (c *ipHAConn) receive() (*advertisement, error) {
 
 	// Drop packets from ourselves.
 	if p.src.Equal(c.laddr) {
-		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Received packet from localhost").Sprintf("src", "%v", p.src).Log()
+		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Received packet from localhost").Fmt("src", "%v", p.src).Log()
 		return nil, nil
 	}
 
 	// Drop packets that don't have a TTL/HOPLIMIT.
 	if p.ttl != 255 {
-		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Invalid TTL/HOPLIMIT").Uint8("ttl", p.ttl).Sprintf("src", "%v", p.src).Log()
+		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Invalid TTL/HOPLIMIT").Uint8("ttl", p.ttl).Fmt("src", "%v", p.src).Log()
 		return nil, nil
 	}
 
 	// Validate the VRRP checksum.
 	chksum, err := checksum(advert, p.src, p.dst)
 	if err != nil {
-		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Failed to compute checksum from").Sprintf("src", "%v", p.src).Log()
+		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Failed to compute checksum from").Fmt("src", "%v", p.src).Log()
 		return nil, nil
 	}
 
 	if chksum != 0 {
-		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Invalid VRRP checksum").Sprintf("checksum", "%x", advert.Checksum).Sprintf("src", "%v", p.src).Log()
+		ltsvlog.Logger.Info().String("msg", "IPHAConn.receive: Invalid VRRP checksum").Fmt("checksum", "%x", advert.Checksum).Fmt("src", "%v", p.src).Log()
 		return nil, nil
 	}
 
