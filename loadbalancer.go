@@ -583,6 +583,13 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 	if result.OK && result.Err == nil {
 		destConf := config.findDestination(destination.Address.String(), destination.Port)
 		if destConf != nil && destination.Weight != destConf.Weight {
+			if destConf.Locked {
+				if ltsvlog.Logger.DebugEnabled() {
+					ltsvlog.Logger.Debug().String("msg", "skip attaching since destination is locked").String("destAddr", destConf.Address).Uint16("destPort", destConf.Port).Log()
+				}
+				return nil
+			}
+
 			destination.Weight = destConf.Weight
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
@@ -616,6 +623,13 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 	} else {
 		destConf := config.findDestination(destination.Address.String(), destination.Port)
 		if destConf != nil && destination.Weight != 0 {
+			if destConf.Locked {
+				if ltsvlog.Logger.DebugEnabled() {
+					ltsvlog.Logger.Debug().String("msg", "skip detaching since destination is locked").String("destAddr", destConf.Address).Uint16("destPort", destConf.Port).Log()
+				}
+				return nil
+			}
+
 			destination.Weight = 0
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
