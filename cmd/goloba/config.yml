@@ -1,5 +1,6 @@
 logfile: /tmp/goloba.log
 enable_debug_log: False
+statefile: /var/run/goloba/goloba.state.yml
 vrrp:
   enabled: True
   vrid: 200
