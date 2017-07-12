@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"strconv"
 	"sync"
 	"syscall"
 	"time"
+
+	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
 	"github.com/mqliang/libipvs"
@@ -28,10 +31,11 @@ type LoadBalancer struct {
 
 // Config is the configuration object for the load balancer.
 type Config struct {
-	LogFile        string          `yaml:"logfile"`
-	EnableDebugLog bool            `yaml:"enable_debug_log"`
-	VRRP           VRRPConfig      `yaml:"vrrp"`
-	Services       []ServiceConfig `yaml:"services"`
+	LogFile        string           `yaml:"logfile"`
+	EnableDebugLog bool             `yaml:"enable_debug_log"`
+	StateFile      string           `yaml:"statefile"`
+	VRRP           VRRPConfig       `yaml:"vrrp"`
+	Services       []*ServiceConfig `yaml:"services"`
 }
 
 // VRRPConfig is the configuration about VRRP.
@@ -50,20 +54,23 @@ type VRRPConfig struct {
 
 // ServiceConfig is the configuration on the service.
 type ServiceConfig struct {
-	Name         string              `yaml:"name"`
-	Port         uint16              `yaml:"port"`
-	Address      string              `yaml:"address"`
-	Schedule     string              `yaml:"schedule"`
-	Type         string              `yaml:"type"`
-	Destinations []DestinationConfig `yaml:"destinations"`
+	Name         string               `yaml:"name"`
+	Port         uint16               `yaml:"port"`
+	Address      string               `yaml:"address"`
+	Schedule     string               `yaml:"schedule"`
+	Type         string               `yaml:"type"`
+	Destinations []*DestinationConfig `yaml:"destinations"`
 }
 
 // DestinationConfig is the configuration about the destination.
 type DestinationConfig struct {
-	Port        uint16            `yaml:"port"`
-	Address     string            `yaml:"address"`
-	Weight      uint32            `yaml:"weight"`
-	HealthCheck HealthCheckConfig `yaml:"health_check"`
+	Port        uint16             `yaml:"port"`
+	Address     string             `yaml:"address"`
+	Weight      uint32             `yaml:"weight"`
+	HealthCheck *HealthCheckConfig `yaml:"health_check"`
+
+	Detached bool `yaml:"detached"`
+	Locked   bool `yaml:"locked"`
 }
 
 // HealthCheckConfig is the configuration about the health check.
@@ -98,7 +105,18 @@ var ErrInvalidIP = errors.New("invalid IP address")
 func (c *Config) findService(addr string, port uint16) *ServiceConfig {
 	for _, s := range c.Services {
 		if s.Address == addr && s.Port == port {
-			return &s
+			return s
+		}
+	}
+	return nil
+}
+
+func (c *Config) findDestination(address string, port uint16) *DestinationConfig {
+	for _, s := range c.Services {
+		for _, dest := range s.Destinations {
+			if dest.Address == address && dest.Port == port {
+				return dest
+			}
 		}
 	}
 	return nil
@@ -107,7 +125,7 @@ func (c *Config) findService(addr string, port uint16) *ServiceConfig {
 func (c *ServiceConfig) findDestination(addr string, port uint16) *DestinationConfig {
 	for _, d := range c.Destinations {
 		if d.Address == addr && d.Port == port {
-			return &d
+			return d
 		}
 	}
 	return nil
@@ -206,6 +224,22 @@ func New(config *Config) (*LoadBalancer, error) {
 	}, nil
 }
 
+func (lb *LoadBalancer) saveState() error {
+	data, err := yaml.Marshal(lb.config)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to save goloba state file, err=%v", err)
+		}).Stack("")
+	}
+	err = ioutil.WriteFile(lb.config.StateFile, data, 0666)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to save goloba state file, err=%v", err)
+		}).Stack("")
+	}
+	return nil
+}
+
 func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 	if !vrrpCfg.Enabled {
 		return nil, nil
@@ -273,7 +307,7 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 
 // Run runs a load balancer.
 func (l *LoadBalancer) Run(ctx context.Context) error {
-	err := l.reloadConfig(ctx, l.config)
+	err := l.loadConfigOrStateFile(ctx, l.config)
 	if err != nil {
 		return err
 	}
@@ -281,6 +315,35 @@ func (l *LoadBalancer) Run(ctx context.Context) error {
 		go l.vrrpNode.run(ctx)
 	}
 	l.runHealthCheckLoop(ctx, l.config)
+	return nil
+}
+
+func (l *LoadBalancer) loadConfigOrStateFile(ctx context.Context, config *Config) error {
+	if config.StateFile == "" {
+		buf, err := ioutil.ReadFile(config.StateFile)
+		if err != nil {
+			return ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to read state file, err=%v", err)
+			}).String("stateFile", config.StateFile).Stack("")
+		}
+		var conf Config
+		err = yaml.Unmarshal(buf, &conf)
+		if err != nil {
+			return ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to parse state file, err=%v", err)
+			}).String("stateFile", config.StateFile).Stack("")
+		}
+
+		config = &conf
+		ltsvlog.Logger.Info().String("msg", "loading config from state file instead of config file").String("stateFile", config.StateFile).Log()
+	}
+
+	err := l.reloadConfig(ctx, config)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to load config, err=%v", err)
+		})
+	}
 	return nil
 }
 
@@ -368,7 +431,7 @@ func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, se
 		}
 
 		for _, destConf := range serviceConf.Destinations {
-			err := l.addOrUpdateDestination(ctx, service, serviceAndDests, &serviceConf, &destConf)
+			err := l.addOrUpdateDestination(ctx, service, serviceAndDests, serviceConf, destConf)
 			if err != nil {
 				return err
 			}
@@ -484,17 +547,6 @@ func ipAddressFamily(ip net.IP) int {
 	return syscall.AF_INET6
 }
 
-func findConfigServer(config *Config, address string, port uint16) *DestinationConfig {
-	for _, lvs := range config.Services {
-		for _, server := range lvs.Destinations {
-			if server.Address == address && server.Port == port {
-				return &server
-			}
-		}
-	}
-	return nil
-}
-
 func (l *LoadBalancer) runHealthCheckLoop(ctx context.Context, config *Config) {
 	l.mu.Lock()
 	l.checkResultC = make(chan healthcheckResult, config.totalServiceCount())
@@ -529,9 +581,9 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 		ltsvlog.Logger.Debug().String("msg", "after findDestination").Fmt("service", "%+v", service).Fmt("destination", "%+v", destination).Log()
 	}
 	if result.OK && result.Err == nil {
-		c := findConfigServer(config, destination.Address.String(), destination.Port)
-		if c != nil && destination.Weight != c.Weight {
-			destination.Weight = c.Weight
+		destConf := config.findDestination(destination.Address.String(), destination.Port)
+		if destConf != nil && destination.Weight != destConf.Weight {
+			destination.Weight = destConf.Weight
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
@@ -546,9 +598,24 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 				Uint16("port", destination.Port).
 				Stringer("fwdMethod", destination.FwdMethod).
 				Uint32("weight", destination.Weight).Log()
+			destConf.Detached = false
+			err = l.saveState()
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to save state after attach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "update state file after attach destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Log()
 		}
 	} else {
-		if destination.Weight != 0 {
+		destConf := config.findDestination(destination.Address.String(), destination.Port)
+		if destConf != nil && destination.Weight != 0 {
 			destination.Weight = 0
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
@@ -564,6 +631,18 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 				Uint16("port", destination.Port).
 				Stringer("fwdMethod", destination.FwdMethod).
 				Uint32("weight", destination.Weight).Log()
+			destConf.Detached = true
+			err = l.saveState()
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to save state after detach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "update state file after detach destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).Log()
 		}
 	}
 	return nil
