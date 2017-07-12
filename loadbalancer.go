@@ -38,6 +38,27 @@ type Config struct {
 	Services       []*ServiceConfig `yaml:"services"`
 }
 
+// String returns the debug string representation of Config
+func (c *Config) String() string {
+	buf := []byte("Config{LogFile:")
+	buf = append(buf, []byte(c.LogFile)...)
+	buf = append(buf, []byte(" EnableDebugLog:")...)
+	buf = strconv.AppendBool(buf, c.EnableDebugLog)
+	buf = append(buf, []byte(" StateFile:")...)
+	buf = append(buf, []byte(c.StateFile)...)
+	buf = append(buf, []byte(" VRRP:")...)
+	buf = append(buf, []byte(fmt.Sprintf("%+v", c.VRRP))...)
+	buf = append(buf, []byte(" Services:[")...)
+	for i, s := range c.Services {
+		if i > 0 {
+			buf = append(buf, ' ')
+		}
+		buf = append(buf, []byte(s.String())...)
+	}
+	buf = append(buf, []byte("]}")...)
+	return string(buf)
+}
+
 // VRRPConfig is the configuration about VRRP.
 type VRRPConfig struct {
 	Enabled              bool          `yaml:"enabled"`
@@ -55,11 +76,33 @@ type VRRPConfig struct {
 // ServiceConfig is the configuration on the service.
 type ServiceConfig struct {
 	Name         string               `yaml:"name"`
-	Port         uint16               `yaml:"port"`
 	Address      string               `yaml:"address"`
+	Port         uint16               `yaml:"port"`
 	Schedule     string               `yaml:"schedule"`
 	Type         string               `yaml:"type"`
 	Destinations []*DestinationConfig `yaml:"destinations"`
+}
+
+// String returns the debug string representation of ServiceConfig
+func (c *ServiceConfig) String() string {
+	buf := []byte("ServiceConfig{Name:")
+	buf = append(buf, []byte(c.Name)...)
+	buf = append(buf, []byte(" Address:")...)
+	buf = append(buf, []byte(c.Address)...)
+	buf = append(buf, []byte(" Port:")...)
+	buf = append(buf, []byte(" Schedule:")...)
+	buf = append(buf, []byte(c.Schedule)...)
+	buf = append(buf, []byte(" Type:")...)
+	buf = append(buf, []byte(c.Type)...)
+	buf = append(buf, []byte(" Destinations:[")...)
+	for i, d := range c.Destinations {
+		if i > 0 {
+			buf = append(buf, ' ')
+		}
+		buf = append(buf, []byte(d.String())...)
+	}
+	buf = append(buf, []byte("]}")...)
+	return string(buf)
 }
 
 // DestinationConfig is the configuration about the destination.
@@ -71,6 +114,28 @@ type DestinationConfig struct {
 
 	Detached bool `yaml:"detached"`
 	Locked   bool `yaml:"locked"`
+}
+
+// String returns the debug string representation of DestinationConfig
+func (c *DestinationConfig) String() string {
+	buf := []byte("DestinationConfig{Port:")
+	buf = strconv.AppendUint(buf, uint64(c.Port), 10)
+	buf = append(buf, []byte(" Address:")...)
+	buf = append(buf, []byte(c.Address)...)
+	buf = append(buf, []byte(" Weight:")...)
+	buf = strconv.AppendUint(buf, uint64(c.Weight), 10)
+	buf = append(buf, []byte(" HealthCheck:")...)
+	if c.HealthCheck == nil {
+		buf = append(buf, []byte("<nil>")...)
+	} else {
+		buf = append(buf, []byte(fmt.Sprintf("%+v", c.HealthCheck))...)
+	}
+	buf = append(buf, []byte(" Detached:")...)
+	buf = strconv.AppendBool(buf, c.Detached)
+	buf = append(buf, []byte(" Locked:")...)
+	buf = strconv.AppendBool(buf, c.Locked)
+	buf = append(buf, '}')
+	return string(buf)
 }
 
 // HealthCheckConfig is the configuration about the health check.
@@ -319,7 +384,7 @@ func (l *LoadBalancer) Run(ctx context.Context) error {
 }
 
 func (l *LoadBalancer) loadConfigOrStateFile(ctx context.Context, config *Config) error {
-	if config.StateFile == "" {
+	if config.StateFile != "" {
 		buf, err := ioutil.ReadFile(config.StateFile)
 		if err != nil {
 			return ltsvlog.WrapErr(err, func(err error) error {
@@ -332,6 +397,10 @@ func (l *LoadBalancer) loadConfigOrStateFile(ctx context.Context, config *Config
 			return ltsvlog.WrapErr(err, func(err error) error {
 				return fmt.Errorf("failed to parse state file, err=%v", err)
 			}).String("stateFile", config.StateFile).Stack("")
+		}
+
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "loaded state file").String("stateFile", config.StateFile).Fmt("conf", "%+v", conf).Log()
 		}
 
 		config = &conf
