@@ -31,32 +31,11 @@ type LoadBalancer struct {
 
 // Config is the configuration object for the load balancer.
 type Config struct {
-	LogFile        string           `yaml:"logfile"`
-	EnableDebugLog bool             `yaml:"enable_debug_log"`
-	StateFile      string           `yaml:"statefile"`
-	VRRP           VRRPConfig       `yaml:"vrrp"`
-	Services       []*ServiceConfig `yaml:"services"`
-}
-
-// String returns the debug string representation of Config
-func (c *Config) String() string {
-	buf := []byte("Config{LogFile:")
-	buf = append(buf, []byte(c.LogFile)...)
-	buf = append(buf, []byte(" EnableDebugLog:")...)
-	buf = strconv.AppendBool(buf, c.EnableDebugLog)
-	buf = append(buf, []byte(" StateFile:")...)
-	buf = append(buf, []byte(c.StateFile)...)
-	buf = append(buf, []byte(" VRRP:")...)
-	buf = append(buf, []byte(fmt.Sprintf("%+v", c.VRRP))...)
-	buf = append(buf, []byte(" Services:[")...)
-	for i, s := range c.Services {
-		if i > 0 {
-			buf = append(buf, ' ')
-		}
-		buf = append(buf, []byte(s.String())...)
-	}
-	buf = append(buf, []byte("]}")...)
-	return string(buf)
+	LogFile        string          `yaml:"logfile"`
+	EnableDebugLog bool            `yaml:"enable_debug_log"`
+	StateFile      string          `yaml:"statefile"`
+	VRRP           VRRPConfig      `yaml:"vrrp"`
+	Services       []ServiceConfig `yaml:"services"`
 }
 
 // VRRPConfig is the configuration about VRRP.
@@ -75,67 +54,23 @@ type VRRPConfig struct {
 
 // ServiceConfig is the configuration on the service.
 type ServiceConfig struct {
-	Name         string               `yaml:"name"`
-	Address      string               `yaml:"address"`
-	Port         uint16               `yaml:"port"`
-	Schedule     string               `yaml:"schedule"`
-	Type         string               `yaml:"type"`
-	Destinations []*DestinationConfig `yaml:"destinations"`
-}
-
-// String returns the debug string representation of ServiceConfig
-func (c *ServiceConfig) String() string {
-	buf := []byte("ServiceConfig{Name:")
-	buf = append(buf, []byte(c.Name)...)
-	buf = append(buf, []byte(" Address:")...)
-	buf = append(buf, []byte(c.Address)...)
-	buf = append(buf, []byte(" Port:")...)
-	buf = append(buf, []byte(" Schedule:")...)
-	buf = append(buf, []byte(c.Schedule)...)
-	buf = append(buf, []byte(" Type:")...)
-	buf = append(buf, []byte(c.Type)...)
-	buf = append(buf, []byte(" Destinations:[")...)
-	for i, d := range c.Destinations {
-		if i > 0 {
-			buf = append(buf, ' ')
-		}
-		buf = append(buf, []byte(d.String())...)
-	}
-	buf = append(buf, []byte("]}")...)
-	return string(buf)
+	Name         string              `yaml:"name"`
+	Address      string              `yaml:"address"`
+	Port         uint16              `yaml:"port"`
+	Schedule     string              `yaml:"schedule"`
+	Type         string              `yaml:"type"`
+	Destinations []DestinationConfig `yaml:"destinations"`
 }
 
 // DestinationConfig is the configuration about the destination.
 type DestinationConfig struct {
-	Port        uint16             `yaml:"port"`
-	Address     string             `yaml:"address"`
-	Weight      uint32             `yaml:"weight"`
-	HealthCheck *HealthCheckConfig `yaml:"health_check"`
+	Port        uint16            `yaml:"port"`
+	Address     string            `yaml:"address"`
+	Weight      uint32            `yaml:"weight"`
+	HealthCheck HealthCheckConfig `yaml:"health_check"`
 
 	Detached bool `yaml:"detached"`
 	Locked   bool `yaml:"locked"`
-}
-
-// String returns the debug string representation of DestinationConfig
-func (c *DestinationConfig) String() string {
-	buf := []byte("DestinationConfig{Port:")
-	buf = strconv.AppendUint(buf, uint64(c.Port), 10)
-	buf = append(buf, []byte(" Address:")...)
-	buf = append(buf, []byte(c.Address)...)
-	buf = append(buf, []byte(" Weight:")...)
-	buf = strconv.AppendUint(buf, uint64(c.Weight), 10)
-	buf = append(buf, []byte(" HealthCheck:")...)
-	if c.HealthCheck == nil {
-		buf = append(buf, []byte("<nil>")...)
-	} else {
-		buf = append(buf, []byte(fmt.Sprintf("%+v", c.HealthCheck))...)
-	}
-	buf = append(buf, []byte(" Detached:")...)
-	buf = strconv.AppendBool(buf, c.Detached)
-	buf = append(buf, []byte(" Locked:")...)
-	buf = strconv.AppendBool(buf, c.Locked)
-	buf = append(buf, '}')
-	return string(buf)
 }
 
 // HealthCheckConfig is the configuration about the health check.
@@ -168,7 +103,8 @@ type ipvsDestination struct {
 var ErrInvalidIP = errors.New("invalid IP address")
 
 func (c *Config) findService(addr string, port uint16) *ServiceConfig {
-	for _, s := range c.Services {
+	for i := range c.Services {
+		s := &c.Services[i]
 		if s.Address == addr && s.Port == port {
 			return s
 		}
@@ -177,8 +113,10 @@ func (c *Config) findService(addr string, port uint16) *ServiceConfig {
 }
 
 func (c *Config) findDestination(address string, port uint16) *DestinationConfig {
-	for _, s := range c.Services {
-		for _, dest := range s.Destinations {
+	for i := range c.Services {
+		s := &c.Services[i]
+		for j := range s.Destinations {
+			dest := &s.Destinations[j]
 			if dest.Address == address && dest.Port == port {
 				return dest
 			}
@@ -188,7 +126,8 @@ func (c *Config) findDestination(address string, port uint16) *DestinationConfig
 }
 
 func (c *ServiceConfig) findDestination(addr string, port uint16) *DestinationConfig {
-	for _, d := range c.Destinations {
+	for i := range c.Destinations {
+		d := &c.Destinations[i]
 		if d.Address == addr && d.Port == port {
 			return d
 		}
@@ -459,7 +398,8 @@ func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 }
 
 func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, servicesAndDests *ipvsServicesAndDests) error {
-	for _, serviceConf := range config.Services {
+	for i := range config.Services {
+		serviceConf := &config.Services[i]
 		ipAddr := net.ParseIP(serviceConf.Address)
 		if ipAddr == nil {
 			return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
@@ -499,7 +439,8 @@ func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, se
 			}
 		}
 
-		for _, destConf := range serviceConf.Destinations {
+		for j := range serviceConf.Destinations {
+			destConf := &serviceConf.Destinations[j]
 			err := l.addOrUpdateDestination(ctx, service, serviceAndDests, serviceConf, destConf)
 			if err != nil {
 				return err
