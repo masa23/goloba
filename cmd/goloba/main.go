@@ -37,15 +37,15 @@ func main() {
 	}
 
 	// ログ
-	logFile, err := os.OpenFile(conf.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	errorLogFile, err := os.OpenFile(conf.ErrorLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to open log file to write, err=%v", err)
-		}).String("logFile", conf.LogFile).Stack(""))
+			return fmt.Errorf("failed to open error log file to write, err=%v", err)
+		}).String("errorLog", conf.ErrorLog).Stack(""))
 		os.Exit(1)
 	}
-	defer logFile.Close()
-	ltsvlog.Logger = ltsvlog.NewLTSVLogger(logFile, conf.EnableDebugLog)
+	defer errorLogFile.Close()
+	ltsvlog.Logger = ltsvlog.NewLTSVLogger(errorLogFile, conf.EnableDebugLog)
 
 	ltsvlog.Logger.Info().String("msg", "Start goloba!").Log()
 
@@ -61,20 +61,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(context.Background())
-
-	sigc := make(chan os.Signal, 3)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	go func() {
-		for s := range sigc {
-			ltsvlog.Logger.Info().String("msg", "Received signal, initiating shutdown...").Stringer("signal", s).Log()
-			cancel()
+		err = lb.Run(ctx)
+		if err != nil {
+			ltsvlog.Logger.Err(err)
 		}
+		done <- struct{}{}
 	}()
 
-	err = lb.Run(ctx)
-	if err != nil {
-		ltsvlog.Logger.Err(err)
-		os.Exit(1)
-	}
+	signals := make(chan os.Signal)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	ltsvlog.Logger.Info().String("msg", "Received SIGTERM, initiating shutdown...").Log()
+	cancel()
+	<-done
+	ltsvlog.Logger.Info().String("msg", "exiting main").Log()
 }

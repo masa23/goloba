@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"syscall"
@@ -27,16 +28,23 @@ type LoadBalancer struct {
 	servicesAndDests *ipvsServicesAndDests
 	checkers         *healthcheckers
 	checkResultC     chan healthcheckResult
+	apiServer        *apiServer
 	config           *Config
 }
 
 // Config is the configuration object for the load balancer.
 type Config struct {
-	LogFile        string          `yaml:"logfile"`
+	ErrorLog       string          `yaml:"error_log"`
 	EnableDebugLog bool            `yaml:"enable_debug_log"`
+	API            APIConfig       `yaml:"api"`
 	StateFile      string          `yaml:"statefile"`
 	VRRP           VRRPConfig      `yaml:"vrrp"`
 	Services       []ServiceConfig `yaml:"services"`
+}
+
+type APIConfig struct {
+	ListenAddress string `yaml:"listen_address"`
+	AccessLog     string `yaml:"access_log"`
 }
 
 // VRRPConfig is the configuration about VRRP.
@@ -319,32 +327,43 @@ func (l *LoadBalancer) Run(ctx context.Context) error {
 	if l.vrrpNode != nil {
 		go l.vrrpNode.run(ctx)
 	}
-	l.runHealthCheckLoop(ctx, l.config)
+	go l.runHealthCheckLoop(ctx, l.config)
+	if l.apiServer != nil {
+		go l.runAPIServer(ctx)
+	}
+	<-ctx.Done()
+	if l.apiServer != nil {
+		ltsvlog.Logger.Info().String("msg", "waiting API server to shutdown").Log()
+		<-l.apiServer.done
+	}
+	ltsvlog.Logger.Info().String("msg", "exiting Run").Log()
 	return nil
 }
 
 func (l *LoadBalancer) loadConfigOrStateFile(ctx context.Context, config *Config) error {
 	if config.StateFile != "" {
 		buf, err := ioutil.ReadFile(config.StateFile)
-		if err != nil {
+		if err != nil && !os.IsNotExist(err) {
 			return ltsvlog.WrapErr(err, func(err error) error {
 				return fmt.Errorf("failed to read state file, err=%v", err)
 			}).String("stateFile", config.StateFile).Stack("")
 		}
-		var conf Config
-		err = yaml.Unmarshal(buf, &conf)
-		if err != nil {
-			return ltsvlog.WrapErr(err, func(err error) error {
-				return fmt.Errorf("failed to parse state file, err=%v", err)
-			}).String("stateFile", config.StateFile).Stack("")
-		}
+		if err == nil {
+			var conf Config
+			err = yaml.Unmarshal(buf, &conf)
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("failed to parse state file, err=%v", err)
+				}).String("stateFile", config.StateFile).Stack("")
+			}
 
-		if ltsvlog.Logger.DebugEnabled() {
-			ltsvlog.Logger.Debug().String("msg", "loaded state file").String("stateFile", config.StateFile).Fmt("conf", "%+v", conf).Log()
-		}
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "loaded state file").String("stateFile", config.StateFile).Fmt("conf", "%+v", conf).Log()
+			}
 
-		config = &conf
-		ltsvlog.Logger.Info().String("msg", "loading config from state file instead of config file").String("stateFile", config.StateFile).Log()
+			config = &conf
+			ltsvlog.Logger.Info().String("msg", "loading config from state file instead of config file").String("stateFile", config.StateFile).Log()
+		}
 	}
 
 	err := l.reloadConfig(ctx, config)
@@ -392,6 +411,13 @@ func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 
 	if l.checkResultC != nil {
 		l.doUpdateCheckers(ctx, config)
+	}
+
+	if config.API.ListenAddress != "" {
+		l.apiServer = &apiServer{
+			httpServer: &http.Server{Addr: config.API.ListenAddress},
+			done:       make(chan struct{}),
+		}
 	}
 
 	l.config = config
