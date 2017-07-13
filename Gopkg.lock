@@ -17,7 +17,7 @@
   branch = "master"
   name = "github.com/hnakamur/netutil"
   packages = ["."]
-  revision = "8b96abb86d182a9aa4eeeaa4144978098b31cbfb"
+  revision = "1d0a4a9f82bff9ccbd712616d67642e9322d1cd0"
 
 [[projects]]
   branch = "master"
