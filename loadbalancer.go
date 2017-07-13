@@ -351,7 +351,7 @@ func (l *LoadBalancer) Run(ctx context.Context, listeners []net.Listener) error 
 		go l.runAPIServer(ctx, listeners)
 	}
 	<-ctx.Done()
-	if l.apiServer != nil {
+	if l.config.API.ListenAddress != "" {
 		ltsvlog.Logger.Info().String("msg", "waiting API server to shutdown").Log()
 		<-l.apiServer.done
 	}
