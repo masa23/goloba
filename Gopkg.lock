@@ -27,6 +27,12 @@
 
 [[projects]]
   branch = "master"
+  name = "github.com/hnakamur/webapputil"
+  packages = ["."]
+  revision = "6f2570d509284400e52f1e33d395f2abd01075d1"
+
+[[projects]]
+  branch = "master"
   name = "github.com/mdlayher/arp"
   packages = ["."]
   revision = "43953fc6354aa71b6d6814755eceba262eae9246"
@@ -70,6 +76,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "f8f1645ef5c131c04f3554626571f6b54a096c4208b75d10013f04857480ec4b"
+  inputs-digest = "eb99d0389924a665337ddfccc6fba2e1a51cf67972b90c6aabbe8f30e84b1e0f"
   solver-name = "gps-cdcl"
   solver-version = 1
