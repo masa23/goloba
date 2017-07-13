@@ -2,16 +2,18 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
-	yaml "gopkg.in/yaml.v2"
-
 	"github.com/hnakamur/ltsvlog"
+	"github.com/hnakamur/serverstarter"
 	"github.com/masa23/goloba"
 )
 
@@ -20,61 +22,96 @@ func main() {
 	flag.StringVar(&configfile, "config", "config.yml", "Config File")
 	flag.Parse()
 
-	buf, err := ioutil.ReadFile(configfile)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to read config file, err=%v", err)
-		}).String("configFile", configfile).Stack(""))
-		os.Exit(1)
-	}
-	var conf goloba.Config
-	err = yaml.Unmarshal(buf, &conf)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to parse config file, err=%v", err)
-		}).String("configFile", configfile).Stack(""))
-		os.Exit(1)
-	}
-
-	// ログ
-	logFile, err := os.OpenFile(conf.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to open log file to write, err=%v", err)
-		}).String("logFile", conf.LogFile).Stack(""))
-		os.Exit(1)
-	}
-	defer logFile.Close()
-	ltsvlog.Logger = ltsvlog.NewLTSVLogger(logFile, conf.EnableDebugLog)
-
-	ltsvlog.Logger.Info().String("msg", "Start goloba!").Log()
-
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().Fmt("config", "%+v", conf).Log()
-	}
-
-	lb, err := goloba.New(&conf)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to create LVS, err=%v", err)
-		}))
-		os.Exit(1)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	sigc := make(chan os.Signal, 3)
-	signal.Notify(sigc, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
-	go func() {
-		for s := range sigc {
-			ltsvlog.Logger.Info().String("msg", "Received signal, initiating shutdown...").Stringer("signal", s).Log()
-			cancel()
-		}
-	}()
-
-	err = lb.Run(ctx)
+	conf, err := goloba.LoadConfig(configfile)
 	if err != nil {
 		ltsvlog.Logger.Err(err)
 		os.Exit(1)
 	}
+	// Setup the error logger
+	errorLogFile, err := os.OpenFile(conf.ErrorLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to open error log file to write, err=%v\n", err)
+		os.Exit(1)
+	}
+	defer errorLogFile.Close()
+	ltsvlog.Logger = ltsvlog.NewLTSVLogger(errorLogFile, conf.EnableDebugLog)
+
+	pid := os.Getpid()
+	starter := serverstarter.New()
+	if starter.IsMaster() {
+		ltsvlog.Logger.Info().String("msg", "goloba master started!").Int("pid", pid).Log()
+		if conf.PidFile != "" {
+			data := strconv.AppendInt(nil, int64(pid), 10)
+			err = ioutil.WriteFile(conf.PidFile, data, 0666)
+			if err != nil {
+				ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("failed to write pid file; %v", err)
+				}).String("pidFile", conf.PidFile))
+				os.Exit(2)
+			}
+		}
+
+		var listeners []net.Listener
+		if conf.API.ListenAddress != "" {
+			ln, err := net.Listen("tcp", conf.API.ListenAddress)
+			if err != nil {
+				ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("failed to listen address; %v", err)
+				}).String("listenAddress", conf.API.ListenAddress))
+				os.Exit(2)
+			}
+			listeners = append(listeners, ln)
+		}
+
+		err = starter.RunMaster(listeners...)
+		if err != nil {
+			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to run master; %v", err)
+			}).String("listenAddress", conf.API.ListenAddress))
+			os.Exit(2)
+		}
+		return
+	}
+
+	ltsvlog.Logger.Info().String("msg", "goloba worker started!").Int("pid", pid).Log()
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().Fmt("config", "%+v", conf).Log()
+	}
+
+	listeners, err := starter.Listeners()
+	if err != nil {
+		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to get listeners, err=%v", err)
+		}))
+		os.Exit(2)
+	} else if len(listeners) == 0 {
+		ltsvlog.Logger.Err(errors.New("no listeners"))
+		os.Exit(2)
+	}
+
+	lb, err := goloba.New(conf)
+	if err != nil {
+		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to create load balancer, err=%v", err)
+		}))
+		os.Exit(2)
+	}
+
+	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		err = lb.Run(ctx, listeners)
+		if err != nil {
+			ltsvlog.Logger.Err(err)
+		}
+		done <- struct{}{}
+	}()
+
+	signals := make(chan os.Signal)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	ltsvlog.Logger.Info().String("msg", "Received SIGTERM, initiating shutdown...").Log()
+	cancel()
+	<-done
+	ltsvlog.Logger.Info().String("msg", "exiting main").Log()
 }
