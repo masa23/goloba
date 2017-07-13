@@ -111,6 +111,24 @@ type ipvsDestination struct {
 // ErrInvalidIP is the error which is returned when an IP address is invalid.
 var ErrInvalidIP = errors.New("invalid IP address")
 
+// LoadConfig loads the configuration from a file.
+func LoadConfig(file string) (*Config, error) {
+	buf, err := ioutil.ReadFile(file)
+	if err != nil {
+		return nil, ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to read config file, err=%v", err)
+		}).String("configFile", file).Stack("")
+	}
+	var c Config
+	err = yaml.Unmarshal(buf, &c)
+	if err != nil {
+		return nil, ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to parse config file, err=%v", err)
+		}).String("configFile", file).Stack("")
+	}
+	return &c, nil
+}
+
 func (c *Config) findService(addr net.IP, port uint16) *ServiceConfig {
 	for i := range c.Services {
 		s := &c.Services[i]

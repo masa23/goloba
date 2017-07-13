@@ -4,12 +4,9 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"syscall"
-
-	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
 	"github.com/masa23/goloba"
@@ -20,19 +17,9 @@ func main() {
 	flag.StringVar(&configfile, "config", "config.yml", "Config File")
 	flag.Parse()
 
-	buf, err := ioutil.ReadFile(configfile)
+	conf, err := goloba.LoadConfig(configfile)
 	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to read config file, err=%v", err)
-		}).String("configFile", configfile).Stack(""))
-		os.Exit(1)
-	}
-	var conf goloba.Config
-	err = yaml.Unmarshal(buf, &conf)
-	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to parse config file, err=%v", err)
-		}).String("configFile", configfile).Stack(""))
+		ltsvlog.Logger.Err(err)
 		os.Exit(1)
 	}
 
@@ -53,7 +40,7 @@ func main() {
 		ltsvlog.Logger.Debug().Fmt("config", "%+v", conf).Log()
 	}
 
-	lb, err := goloba.New(&conf)
+	lb, err := goloba.New(conf)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to create LVS, err=%v", err)
