@@ -1,6 +1,10 @@
-logfile: /tmp/goloba.log
-enable_debug_log: False
+pid_file: /var/run/goloba/goloba.pid
+error_log: /var/log/goloba/goloba_error.log
+enable_debug_log: false
 statefile: /var/run/goloba/goloba.state.yml
+api:
+  listen_address: ":8880"
+  access_log: /var/log/goloba/goloba_access.log
 vrrp:
   enabled: True
   vrid: 200
