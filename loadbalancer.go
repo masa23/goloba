@@ -1,6 +1,7 @@
 package goloba
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"sync"
 	"syscall"
@@ -23,7 +25,7 @@ import (
 // LoadBalancer is the load balancer.
 type LoadBalancer struct {
 	ipvs             libipvs.IPVSHandle
-	mu               sync.Mutex
+	mu               sync.RWMutex
 	vrrpNode         *haNode
 	servicesAndDests *ipvsServicesAndDests
 	checkers         *healthcheckers
@@ -43,6 +45,7 @@ type Config struct {
 	Services       []ServiceConfig `yaml:"services"`
 }
 
+// APIConfig is the configuration about API server.
 type APIConfig struct {
 	ListenAddress string `yaml:"listen_address"`
 	AccessLog     string `yaml:"access_log"`
@@ -221,8 +224,10 @@ func listServicesAndDests(h libipvs.IPVSHandle) (*ipvsServicesAndDests, error) {
 			servicesAndDests.destinations[destKey] = destination
 			serviceAndDests.destinations[j] = destination
 		}
+		sort.Sort(ipvsDestinationsByIPAndPort(serviceAndDests.destinations))
 		servicesAndDests.services[i] = serviceAndDests
 	}
+	sort.Sort(ipvsServiceAndDestsByIPAndPort(servicesAndDests.services))
 	return servicesAndDests, nil
 }
 
@@ -256,14 +261,14 @@ func New(config *Config) (*LoadBalancer, error) {
 	}, nil
 }
 
-func (lb *LoadBalancer) saveState() error {
-	data, err := yaml.Marshal(lb.config)
+func (l *LoadBalancer) saveState() error {
+	data, err := yaml.Marshal(l.config)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to save goloba state file, err=%v", err)
 		}).Stack("")
 	}
-	err = ioutil.WriteFile(lb.config.StateFile, data, 0666)
+	err = ioutil.WriteFile(l.config.StateFile, data, 0666)
 	if err != nil {
 		return ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to save goloba state file, err=%v", err)
@@ -347,7 +352,7 @@ func (l *LoadBalancer) Run(ctx context.Context, listeners []net.Listener) error 
 		go l.vrrpNode.run(ctx)
 	}
 	go l.runHealthCheckLoop(ctx, l.config)
-	if l.apiServer != nil {
+	if l.config.API.ListenAddress != "" {
 		go l.runAPIServer(ctx, listeners)
 	}
 	<-ctx.Done()
@@ -430,13 +435,6 @@ func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 
 	if l.checkResultC != nil {
 		l.doUpdateCheckers(ctx, config)
-	}
-
-	if config.API.ListenAddress != "" {
-		l.apiServer = &apiServer{
-			httpServer: &http.Server{Addr: config.API.ListenAddress},
-			done:       make(chan struct{}),
-		}
 	}
 
 	l.config = config
@@ -725,5 +723,39 @@ func (l *LoadBalancer) doUpdateCheckers(ctx context.Context, config *Config) {
 			}
 			l.checkers.startHealthchecker(ctx, cfg, l.checkResultC)
 		}
+	}
+}
+
+type ipvsServiceAndDestsByIPAndPort []*ipvsServiceAndDests
+
+func (a ipvsServiceAndDestsByIPAndPort) Len() int      { return len(a) }
+func (a ipvsServiceAndDestsByIPAndPort) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ipvsServiceAndDestsByIPAndPort) Less(i, j int) bool {
+	si := a[i].service
+	sj := a[j].service
+	c := bytes.Compare(si.Address, sj.Address)
+	if c < 0 {
+		return true
+	} else if c > 0 {
+		return false
+	} else {
+		return si.Port < sj.Port
+	}
+}
+
+type ipvsDestinationsByIPAndPort []*ipvsDestination
+
+func (a ipvsDestinationsByIPAndPort) Len() int      { return len(a) }
+func (a ipvsDestinationsByIPAndPort) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ipvsDestinationsByIPAndPort) Less(i, j int) bool {
+	di := a[i].destination
+	dj := a[j].destination
+	c := bytes.Compare(di.Address, dj.Address)
+	if c < 0 {
+		return true
+	} else if c > 0 {
+		return false
+	} else {
+		return di.Port < dj.Port
 	}
 }
