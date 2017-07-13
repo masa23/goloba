@@ -15,6 +15,7 @@ import (
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
+	"github.com/hnakamur/netutil"
 	"github.com/mqliang/libipvs"
 )
 
@@ -55,7 +56,7 @@ type VRRPConfig struct {
 // ServiceConfig is the configuration on the service.
 type ServiceConfig struct {
 	Name         string              `yaml:"name"`
-	Address      string              `yaml:"address"`
+	Address      netutil.IP          `yaml:"address"`
 	Port         uint16              `yaml:"port"`
 	Schedule     string              `yaml:"schedule"`
 	Type         string              `yaml:"type"`
@@ -64,8 +65,8 @@ type ServiceConfig struct {
 
 // DestinationConfig is the configuration about the destination.
 type DestinationConfig struct {
+	Address     netutil.IP        `yaml:"address"`
 	Port        uint16            `yaml:"port"`
-	Address     string            `yaml:"address"`
 	Weight      uint32            `yaml:"weight"`
 	HealthCheck HealthCheckConfig `yaml:"health_check"`
 
@@ -102,22 +103,22 @@ type ipvsDestination struct {
 // ErrInvalidIP is the error which is returned when an IP address is invalid.
 var ErrInvalidIP = errors.New("invalid IP address")
 
-func (c *Config) findService(addr string, port uint16) *ServiceConfig {
+func (c *Config) findService(addr net.IP, port uint16) *ServiceConfig {
 	for i := range c.Services {
 		s := &c.Services[i]
-		if s.Address == addr && s.Port == port {
+		if net.IP(s.Address).Equal(addr) && s.Port == port {
 			return s
 		}
 	}
 	return nil
 }
 
-func (c *Config) findDestination(address string, port uint16) *DestinationConfig {
+func (c *Config) findDestination(addr net.IP, port uint16) *DestinationConfig {
 	for i := range c.Services {
 		s := &c.Services[i]
 		for j := range s.Destinations {
 			dest := &s.Destinations[j]
-			if dest.Address == address && dest.Port == port {
+			if net.IP(dest.Address).Equal(addr) && dest.Port == port {
 				return dest
 			}
 		}
@@ -125,30 +126,30 @@ func (c *Config) findDestination(address string, port uint16) *DestinationConfig
 	return nil
 }
 
-func (c *ServiceConfig) findDestination(addr string, port uint16) *DestinationConfig {
+func (c *ServiceConfig) findDestination(addr net.IP, port uint16) *DestinationConfig {
 	for i := range c.Destinations {
 		d := &c.Destinations[i]
-		if d.Address == addr && d.Port == port {
+		if net.IP(d.Address).Equal(addr) && d.Port == port {
 			return d
 		}
 	}
 	return nil
 }
 
-func (s *ipvsServicesAndDests) findService(addr string, port uint16) *ipvsServiceAndDests {
+func (s *ipvsServicesAndDests) findService(addr net.IP, port uint16) *ipvsServiceAndDests {
 	for _, serviceAndDests := range s.services {
 		sv := serviceAndDests.service
-		if sv.Address.String() == addr && sv.Port == port {
+		if sv.Address.Equal(addr) && sv.Port == port {
 			return serviceAndDests
 		}
 	}
 	return nil
 }
 
-func (s *ipvsServiceAndDests) findDestination(addr string, port uint16) *ipvsDestination {
+func (s *ipvsServiceAndDests) findDestination(addr net.IP, port uint16) *ipvsDestination {
 	for _, destination := range s.destinations {
 		d := destination.destination
-		if d.Address.String() == addr && d.Port == port {
+		if d.Address.Equal(addr) && d.Port == port {
 			return destination
 		}
 	}
@@ -400,18 +401,13 @@ func (l *LoadBalancer) reloadConfig(ctx context.Context, config *Config) error {
 func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, servicesAndDests *ipvsServicesAndDests) error {
 	for i := range config.Services {
 		serviceConf := &config.Services[i]
-		ipAddr := net.ParseIP(serviceConf.Address)
-		if ipAddr == nil {
-			return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
-				return fmt.Errorf("invalid service IP address, err=%v", err)
-			}).String("address", serviceConf.Address).Stack("")
-		}
 		var service *libipvs.Service
-		serviceAndDests := servicesAndDests.findService(serviceConf.Address, serviceConf.Port)
+		serviceConfIP := net.IP(serviceConf.Address)
+		serviceAndDests := servicesAndDests.findService(serviceConfIP, serviceConf.Port)
 		if serviceAndDests == nil {
-			family := libipvs.AddressFamily(ipAddressFamily(ipAddr))
+			family := libipvs.AddressFamily(ipAddressFamily(serviceConfIP))
 			service = &libipvs.Service{
-				Address:       ipAddr,
+				Address:       serviceConfIP,
 				AddressFamily: family,
 				Protocol:      libipvs.Protocol(syscall.IPPROTO_TCP),
 				Port:          serviceConf.Port,
@@ -420,7 +416,7 @@ func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, se
 			if err := l.ipvs.NewService(service); err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("faild create ipvs service, err=%s", err)
-				}).String("address", serviceConf.Address).
+				}).Stringer("address", serviceConfIP).
 					Uint16("port", serviceConf.Port).
 					String("schedule", serviceConf.Schedule).Stack("")
 			}
@@ -431,7 +427,7 @@ func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, se
 				if err := l.ipvs.UpdateService(service); err != nil {
 					return ltsvlog.WrapErr(err, func(err error) error {
 						return fmt.Errorf("faild update ipvs service, err=%s", err)
-					}).String("address", serviceConf.Address).
+					}).Stringer("address", serviceConfIP).
 						Uint16("port", serviceConf.Port).
 						String("schedule", serviceConf.Schedule).Stack("")
 				}
@@ -461,22 +457,16 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 		fwd = libipvs.IP_VS_CONN_F_MASQ
 	}
 
-	serverIP := net.ParseIP(destConf.Address)
-	if serverIP == nil {
-		return ltsvlog.WrapErr(ErrInvalidIP, func(err error) error {
-			return fmt.Errorf("invalid serverervice IP address, err=%v", err)
-		}).String("address", destConf.Address).Stack("")
-	}
+	destConfIP := net.IP(destConf.Address)
 
 	var dest *ipvsDestination
 	if serviceAndDests != nil {
-		dest = serviceAndDests.findDestination(destConf.Address, destConf.Port)
+		dest = serviceAndDests.findDestination(destConfIP, destConf.Port)
 	}
-
 	if dest == nil {
-		family := libipvs.AddressFamily(ipAddressFamily(serverIP))
+		family := libipvs.AddressFamily(ipAddressFamily(destConfIP))
 		destination := &libipvs.Destination{
-			Address:       serverIP,
+			Address:       destConfIP,
 			AddressFamily: family,
 			Port:          destConf.Port,
 			FwdMethod:     fwd,
@@ -486,7 +476,7 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 		if err != nil {
 			return ltsvlog.WrapErr(err, func(err error) error {
 				return fmt.Errorf("faild create ipvs destination, err=%s", err)
-			}).String("address", destConf.Address).
+			}).Stringer("address", destConfIP).
 				Uint16("port", destConf.Port).
 				String("fwdMethod", serviceConf.Type).
 				Uint32("weight", destConf.Weight).Stack("")
@@ -500,7 +490,7 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
 					return fmt.Errorf("faild update ipvs destination, err=%s", err)
-				}).String("address", destConf.Address).
+				}).Stringer("address", destConfIP).
 					Uint16("port", destConf.Port).
 					String("fwdMethod", serviceConf.Type).
 					Uint32("weight", destConf.Weight).Stack("")
@@ -513,7 +503,7 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 func (l *LoadBalancer) doDeleteIPVS(ctx context.Context, config *Config, servicesAndDests *ipvsServicesAndDests) error {
 	for _, serviceAndDests := range servicesAndDests.services {
 		service := serviceAndDests.service
-		serviceConf := config.findService(service.Address.String(), service.Port)
+		serviceConf := config.findService(service.Address, service.Port)
 		if serviceConf == nil {
 			for _, dest := range serviceAndDests.destinations {
 				destination := dest.destination
@@ -535,7 +525,7 @@ func (l *LoadBalancer) doDeleteIPVS(ctx context.Context, config *Config, service
 		} else {
 			for _, dest := range serviceAndDests.destinations {
 				destination := dest.destination
-				destConf := serviceConf.findDestination(destination.Address.String(), destination.Port)
+				destConf := serviceConf.findDestination(net.IP(destination.Address), destination.Port)
 				if destConf == nil {
 					err := l.ipvs.DelDestination(service, destination)
 					if err != nil {
@@ -591,11 +581,11 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 		ltsvlog.Logger.Debug().String("msg", "after findDestination").Fmt("service", "%+v", service).Fmt("destination", "%+v", destination).Log()
 	}
 	if result.OK && result.Err == nil {
-		destConf := config.findDestination(destination.Address.String(), destination.Port)
+		destConf := config.findDestination(destination.Address, destination.Port)
 		if destConf != nil && destination.Weight != destConf.Weight {
 			if destConf.Locked {
 				if ltsvlog.Logger.DebugEnabled() {
-					ltsvlog.Logger.Debug().String("msg", "skip attaching since destination is locked").String("destAddr", destConf.Address).Uint16("destPort", destConf.Port).Log()
+					ltsvlog.Logger.Debug().String("msg", "skip attaching since destination is locked").Stringer("destAddr", destination.Address).Uint16("destPort", destination.Port).Log()
 				}
 				return nil
 			}
@@ -631,11 +621,11 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 				Uint32("weight", destination.Weight).Log()
 		}
 	} else {
-		destConf := config.findDestination(destination.Address.String(), destination.Port)
+		destConf := config.findDestination(destination.Address, destination.Port)
 		if destConf != nil && destination.Weight != 0 {
 			if destConf.Locked {
 				if ltsvlog.Logger.DebugEnabled() {
-					ltsvlog.Logger.Debug().String("msg", "skip detaching since destination is locked").String("destAddr", destConf.Address).Uint16("destPort", destConf.Port).Log()
+					ltsvlog.Logger.Debug().String("msg", "skip detaching since destination is locked").Stringer("destAddr", destination.Address).Uint16("destPort", destination.Port).Log()
 				}
 				return nil
 			}
@@ -677,9 +667,9 @@ func (l *LoadBalancer) doUpdateCheckers(ctx context.Context, config *Config) {
 		for _, destConf := range serviceConf.Destinations {
 			c := destConf.HealthCheck
 			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").String("serverAddress", destConf.Address).Uint16("serverPort", destConf.Port).Log()
+				ltsvlog.Logger.Debug().String("msg", "doUpdateCheckers").Stringer("destAddr", net.IP(destConf.Address)).Uint16("destPort", destConf.Port).Log()
 			}
-			destKey := destinationKey(net.ParseIP(serviceConf.Address), serviceConf.Port, net.ParseIP(destConf.Address), destConf.Port)
+			destKey := destinationKey(net.IP(serviceConf.Address), serviceConf.Port, net.IP(destConf.Address), destConf.Port)
 			cfg := &healthcheckerConfig{
 				DestinationKey: destKey,
 				Method:         http.MethodGet,
