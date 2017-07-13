@@ -34,6 +34,7 @@ type LoadBalancer struct {
 
 // Config is the configuration object for the load balancer.
 type Config struct {
+	PidFile        string          `yaml:"pid_file"`
 	ErrorLog       string          `yaml:"error_log"`
 	EnableDebugLog bool            `yaml:"enable_debug_log"`
 	API            APIConfig       `yaml:"api"`
@@ -337,7 +338,7 @@ func newVRRPNode(vrrpCfg *VRRPConfig) (*haNode, error) {
 }
 
 // Run runs a load balancer.
-func (l *LoadBalancer) Run(ctx context.Context) error {
+func (l *LoadBalancer) Run(ctx context.Context, listeners []net.Listener) error {
 	err := l.loadConfigOrStateFile(ctx, l.config)
 	if err != nil {
 		return err
@@ -347,7 +348,7 @@ func (l *LoadBalancer) Run(ctx context.Context) error {
 	}
 	go l.runHealthCheckLoop(ctx, l.config)
 	if l.apiServer != nil {
-		go l.runAPIServer(ctx)
+		go l.runAPIServer(ctx, listeners)
 	}
 	<-ctx.Done()
 	if l.apiServer != nil {

@@ -3,6 +3,7 @@ package goloba
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 
@@ -14,7 +15,7 @@ type apiServer struct {
 	done       chan struct{}
 }
 
-func (l *LoadBalancer) runAPIServer(ctx context.Context) {
+func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listener) {
 	apiConf := l.config.API
 	if apiConf.AccessLog != "" {
 		accessLogFile, err := os.OpenFile(apiConf.AccessLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
@@ -22,6 +23,7 @@ func (l *LoadBalancer) runAPIServer(ctx context.Context) {
 			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
 				return fmt.Errorf("failed to open API access log file to write, err=%v", err)
 			}).String("accessLog", apiConf.AccessLog).Stack(""))
+			return
 		}
 		defer accessLogFile.Close()
 	}
@@ -31,7 +33,7 @@ func (l *LoadBalancer) runAPIServer(ctx context.Context) {
 		fmt.Fprintf(w, "Hello from goloba API server")
 	})
 
-	go func() { l.apiServer.httpServer.ListenAndServe() }()
+	go func() { l.apiServer.httpServer.Serve(listeners[0]) }()
 	ltsvlog.Logger.Info().String("msg", "started API server").Log()
 
 	<-ctx.Done()

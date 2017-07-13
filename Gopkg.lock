@@ -21,6 +21,12 @@
 
 [[projects]]
   branch = "master"
+  name = "github.com/hnakamur/serverstarter"
+  packages = ["."]
+  revision = "75ecf9ca9d804b95014188b8327340aaa500e20c"
+
+[[projects]]
+  branch = "master"
   name = "github.com/mdlayher/arp"
   packages = ["."]
   revision = "43953fc6354aa71b6d6814755eceba262eae9246"
@@ -64,6 +70,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "809bbad96f167038cc517a8eb61040167698583178cc9cfc6a3f4beb2c3697f5"
+  inputs-digest = "f8f1645ef5c131c04f3554626571f6b54a096c4208b75d10013f04857480ec4b"
   solver-name = "gps-cdcl"
   solver-version = 1
