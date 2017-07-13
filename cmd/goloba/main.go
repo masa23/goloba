@@ -23,17 +23,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// ログ
+	// Setup the error logger
 	errorLogFile, err := os.OpenFile(conf.ErrorLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to open error log file to write, err=%v", err)
-		}).String("errorLog", conf.ErrorLog).Stack(""))
+		fmt.Fprintf(os.Stderr, "failed to open error log file to write, err=%v\n", err)
 		os.Exit(1)
 	}
 	defer errorLogFile.Close()
 	ltsvlog.Logger = ltsvlog.NewLTSVLogger(errorLogFile, conf.EnableDebugLog)
-
 	ltsvlog.Logger.Info().String("msg", "Start goloba!").Log()
 
 	if ltsvlog.Logger.DebugEnabled() {
@@ -43,7 +40,7 @@ func main() {
 	lb, err := goloba.New(conf)
 	if err != nil {
 		ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("failed to create LVS, err=%v", err)
+			return fmt.Errorf("failed to create load balancer, err=%v", err)
 		}))
 		os.Exit(1)
 	}
