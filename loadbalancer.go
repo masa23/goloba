@@ -615,16 +615,9 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "received healthcheck result").Fmt("result", "%+v", result).Log()
-	}
-
 	dest := l.servicesAndDests.findDestination(result.DestinationKey)
 	service := dest.service
 	destination := dest.destination
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "after findDestination").Fmt("service", "%+v", service).Fmt("destination", "%+v", destination).Log()
-	}
 	if result.OK && result.Err == nil {
 		destConf := config.findDestination(destination.Address, destination.Port)
 		if destConf != nil && destination.Weight != destConf.Weight {
