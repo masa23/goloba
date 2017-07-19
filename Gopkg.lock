@@ -28,8 +28,8 @@
 [[projects]]
   branch = "master"
   name = "github.com/hnakamur/webapputil"
-  packages = ["."]
-  revision = "6f2570d509284400e52f1e33d395f2abd01075d1"
+  packages = [".","problem"]
+  revision = "4a440ac601c29de3c77a6c803d0d380bf1c67d8a"
 
 [[projects]]
   branch = "master"
@@ -76,6 +76,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "eb99d0389924a665337ddfccc6fba2e1a51cf67972b90c6aabbe8f30e84b1e0f"
+  inputs-digest = "ec7e4d41d2db5de73c8c4949e70c7e506898c56d89c301696d33d4e5e51e3cc1"
   solver-name = "gps-cdcl"
   solver-version = 1
