@@ -19,7 +19,7 @@ import (
 
 func main() {
 	var configfile string
-	flag.StringVar(&configfile, "config", "config.yml", "Config File")
+	flag.StringVar(&configfile, "config", "/etc/goloba/goloba.yml", "Config File")
 	flag.Parse()
 
 	conf, err := goloba.LoadConfig(configfile)

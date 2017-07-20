@@ -2,17 +2,19 @@ package webapputil
 
 import "net/http"
 
-// HTTPError represents a ltsvlog.Error and HTTP status code and status text.
+// HTTPError is a struct for a HTTP error which contains an error, a HTTP status code, and a detail.
 type HTTPError struct {
 	Error  error
 	Status int
+	Detail interface{}
 }
 
 // NewHTTPError creates a new HTTPError.
-func NewHTTPError(err error, status int) *HTTPError {
+func NewHTTPError(err error, status int, detail interface{}) *HTTPError {
 	return &HTTPError{
 		Error:  err,
 		Status: status,
+		Detail: detail,
 	}
 }
 

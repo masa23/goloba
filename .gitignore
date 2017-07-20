@@ -1,2 +1,3 @@
 *.log
 cmd/goloba/goloba
+cmd/golobactl/golobactl
