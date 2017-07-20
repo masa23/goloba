@@ -162,7 +162,7 @@ func (a *cliApp) attachCommand(args []string) {
 					return fmt.Errorf("failed to read response from goloba API server")
 				}).String("serverURL", s.URL).Stack(""))
 			}
-			fmt.Printf("%s:\n%s\n", s.URL, data)
+			fmt.Printf("%s:\n%s\n", s.URL, string(data))
 		}()
 	}
 	wg.Wait()
@@ -192,7 +192,13 @@ func (a *cliApp) detachCommand(args []string) {
 			}
 			defer resp.Body.Close()
 
-			io.Copy(os.Stdout, resp.Body)
+			data, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				ltsvlog.Err(ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("failed to read response from goloba API server")
+				}).String("serverURL", s.URL).Stack(""))
+			}
+			fmt.Printf("%s:\n%s\n", s.URL, string(data))
 		}()
 	}
 	wg.Wait()

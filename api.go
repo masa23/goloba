@@ -338,43 +338,56 @@ func sendOKResponse(w http.ResponseWriter, r *http.Request, detail interface{}) 
 }
 
 func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
-	// ipvsadm output:
-	// [root@lbvm01 ~]# ipvsadm -Ln
-	// IP Virtual Server version 1.2.1 (size=4096)
-	// Prot LocalAddress:Port Scheduler Flags
-	//   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn
-	// TCP  192.168.122.2:80 wrr
-	//   -> 192.168.122.62:80            Route   100    0          0
-	//   -> 192.168.122.240:80           Route   500    0          0
-	// TCP  192.168.122.2:443 wrr
-	//   -> 192.168.122.62:443           Masq    10     0          0
-	//   -> 192.168.122.240:443          Masq    20     0          0
-	//
-	// goloba output:
-	// [root@lbvm01 ~]# curl localhost:8880/info
-	// Prot LocalAddress:Port Scheduler Flags
-	//   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn Detached Locked
-	// tcp  192.168.122.2:80 wrr
-	//   -> 192.168.122.62:80            droute  100    0          0         true     false
-	//   -> 192.168.122.240:80           droute  500    0          0         false    false
-	// tcp  192.168.122.2:443 wrr
-	//   -> 192.168.122.62:443           masq    10     0          0         true     false
-	//   -> 192.168.122.240:443          masq    20     0          0         false    false
+	type destination struct {
+		Address      string `json:"address"`
+		Port         uint16 `json:"port"`
+		Forward      string `json:"forward"`
+		Weight       uint32 `json:"weight"`
+		ActiveConn   uint32 `json:"active_conn"`
+		InactiveConn uint32 `json:"inactive_conn"`
+		Detached     bool   `json:"detached"`
+		Locked       bool   `json:"locked"`
+	}
+	type service struct {
+		Protocol     string        `json:"protocol"`
+		Address      string        `json:"address"`
+		Port         uint16        `json:"port"`
+		Schedule     string        `json:"schedule"`
+		Destinations []destination `json:"destinations"`
+	}
 
 	l.mu.RLock()
-	defer l.mu.RUnlock()
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "Prot LocalAddress:Port Scheduler Flags\n")
-	fmt.Fprintf(w, "  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn Detached Locked\n")
-	for _, serviceAndDests := range l.servicesAndDests.services {
+	services := make([]service, len(l.servicesAndDests.services))
+	for i, serviceAndDests := range l.servicesAndDests.services {
 		s := serviceAndDests.service
 		serviceConf := l.config.findService(s.Address, s.Port)
-		fmt.Fprintf(w, "%-4s %s:%d %s\n", s.Protocol, s.Address, s.Port, s.SchedName)
-		for _, dest := range serviceAndDests.destinations {
+		services[i] = service{
+			Protocol:     s.Protocol.String(),
+			Address:      s.Address.String(),
+			Port:         s.Port,
+			Schedule:     s.SchedName,
+			Destinations: make([]destination, len(serviceAndDests.destinations)),
+		}
+		for j, dest := range serviceAndDests.destinations {
 			d := dest.destination
 			destConf := serviceConf.findDestination(d.Address, d.Port)
-			hostPort := net.JoinHostPort(d.Address.String(), strconv.Itoa(int(d.Port)))
-			fmt.Fprintf(w, "  -> %-28s %-7s %-6d %-10d %-9d %-8v %v\n", hostPort, d.FwdMethod, destConf.Weight, d.ActiveConns, d.InactConns, destConf.Detached, destConf.Locked)
+			services[i].Destinations[j] = destination{
+				Address:      d.Address.String(),
+				Port:         d.Port,
+				Forward:      d.FwdMethod.String(),
+				Weight:       destConf.Weight,
+				ActiveConn:   d.ActiveConns,
+				InactiveConn: d.InactConns,
+				Detached:     destConf.Detached,
+				Locked:       destConf.Locked,
+			}
 		}
 	}
+	l.mu.RUnlock()
+
+	sendOKResponse(w, r, struct {
+		Services []service `json:"services"`
+	}{
+		Services: services,
+	})
 }
