@@ -15,6 +15,7 @@ import (
 	"github.com/hnakamur/ltsvlog"
 	"github.com/hnakamur/webapputil"
 	"github.com/hnakamur/webapputil/problem"
+	"github.com/masa23/goloba/api"
 )
 
 type apiServer struct {
@@ -338,40 +339,24 @@ func sendOKResponse(w http.ResponseWriter, r *http.Request, detail interface{}) 
 }
 
 func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
-	type destination struct {
-		Address      string `json:"address"`
-		Port         uint16 `json:"port"`
-		Forward      string `json:"forward"`
-		Weight       uint32 `json:"weight"`
-		ActiveConn   uint32 `json:"active_conn"`
-		InactiveConn uint32 `json:"inactive_conn"`
-		Detached     bool   `json:"detached"`
-		Locked       bool   `json:"locked"`
-	}
-	type service struct {
-		Protocol     string        `json:"protocol"`
-		Address      string        `json:"address"`
-		Port         uint16        `json:"port"`
-		Schedule     string        `json:"schedule"`
-		Destinations []destination `json:"destinations"`
-	}
-
 	l.mu.RLock()
-	services := make([]service, len(l.servicesAndDests.services))
+	info := api.Info{
+		Services: make([]api.Service, len(l.servicesAndDests.services)),
+	}
 	for i, serviceAndDests := range l.servicesAndDests.services {
 		s := serviceAndDests.service
 		serviceConf := l.config.findService(s.Address, s.Port)
-		services[i] = service{
+		info.Services[i] = api.Service{
 			Protocol:     s.Protocol.String(),
 			Address:      s.Address.String(),
 			Port:         s.Port,
 			Schedule:     s.SchedName,
-			Destinations: make([]destination, len(serviceAndDests.destinations)),
+			Destinations: make([]api.Destination, len(serviceAndDests.destinations)),
 		}
 		for j, dest := range serviceAndDests.destinations {
 			d := dest.destination
 			destConf := serviceConf.findDestination(d.Address, d.Port)
-			services[i].Destinations[j] = destination{
+			info.Services[i].Destinations[j] = api.Destination{
 				Address:      d.Address.String(),
 				Port:         d.Port,
 				Forward:      d.FwdMethod.String(),
@@ -385,9 +370,5 @@ func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	l.mu.RUnlock()
 
-	sendOKResponse(w, r, struct {
-		Services []service `json:"services"`
-	}{
-		Services: services,
-	})
+	sendOKResponse(w, r, info)
 }
