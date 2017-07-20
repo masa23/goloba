@@ -2,6 +2,8 @@ package goloba
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/hnakamur/ltsvlog"
 	"github.com/hnakamur/webapputil"
+	"github.com/hnakamur/webapputil/problem"
 )
 
 type apiServer struct {
@@ -22,7 +25,10 @@ type apiServer struct {
 
 func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listener) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/info", l.handleGetInfo)
+	mux.Handle("/attach", wrapWithErrHandler(l.handleAttach))
+	mux.Handle("/detach", wrapWithErrHandler(l.handleDetach))
+	mux.Handle("/unlock", wrapWithErrHandler(l.handleUnlock))
+	mux.HandleFunc("/info", l.handleInfo)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprintf(w, "Hello from goloba API server\n")
@@ -74,7 +80,264 @@ func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listene
 	l.apiServer.done <- struct{}{}
 }
 
-func (l *LoadBalancer) handleGetInfo(w http.ResponseWriter, r *http.Request) {
+func wrapWithErrHandler(next func(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError) http.Handler {
+	return webapputil.WithErrorHandler(next, errorHandler)
+}
+
+func errorHandler(hErr *webapputil.HTTPError, w http.ResponseWriter, r *http.Request) {
+	ltsvlog.Err(hErr.Error)
+	err := problem.SendProblem(w, hErr.Status, hErr.Detail)
+	if err != nil {
+		ltsvlog.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to send problem; %v", err)
+		}))
+	}
+}
+
+func (l *LoadBalancer) handleAttach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
+	hErr := parseForm(r)
+	if hErr != nil {
+		return hErr
+	}
+	serviceIP, servicePort, hErr := getAddressParam(r, "service")
+	if hErr != nil {
+		return hErr
+	}
+	destIP, destPort, hErr := getAddressParam(r, "dest")
+	if hErr != nil {
+		return hErr
+	}
+	lock, hErr := getBoolParam(r, "lock", true)
+	if hErr != nil {
+		return hErr
+	}
+	err := l.attachOrDetachDestinationByAPI(context.TODO(), serviceIP, servicePort, destIP, destPort, true, lock)
+	if err != nil {
+		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
+			Type:  "https://goloba.github.io/problems/internal-server-error",
+			Title: "failed to attach destination",
+		})
+	}
+	sendOKResponse(w, r, struct {
+		Message     string `json:"message"`
+		Service     string `json:"service"`
+		Destination string `json:"destination"`
+		Locked      bool   `json:"locked"`
+	}{
+		Message:     "attached destination",
+		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
+		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
+		Locked:      lock,
+	})
+	return nil
+}
+
+func (l *LoadBalancer) handleDetach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
+	hErr := parseForm(r)
+	if hErr != nil {
+		return hErr
+	}
+	serviceIP, servicePort, hErr := getAddressParam(r, "service")
+	if hErr != nil {
+		return hErr
+	}
+	destIP, destPort, hErr := getAddressParam(r, "dest")
+	if hErr != nil {
+		return hErr
+	}
+	lock, hErr := getBoolParam(r, "lock", true)
+	if hErr != nil {
+		return hErr
+	}
+	err := l.attachOrDetachDestinationByAPI(context.TODO(), serviceIP, servicePort, destIP, destPort, false, lock)
+	if err != nil {
+		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
+			Type:  "https://goloba.github.io/problems/internal-server-error",
+			Title: "failed to detach destination",
+		})
+	}
+	sendOKResponse(w, r, struct {
+		Message     string `json:"message"`
+		Service     string `json:"service"`
+		Destination string `json:"destination"`
+		Locked      bool   `json:"locked"`
+	}{
+		Message:     "detached destination",
+		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
+		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
+		Locked:      lock,
+	})
+	return nil
+}
+
+func (l *LoadBalancer) handleUnlock(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
+	hErr := parseForm(r)
+	if hErr != nil {
+		return hErr
+	}
+	serviceIP, servicePort, hErr := getAddressParam(r, "service")
+	if hErr != nil {
+		return hErr
+	}
+	destIP, destPort, hErr := getAddressParam(r, "dest")
+	if hErr != nil {
+		return hErr
+	}
+	err := l.unlockDestination(context.TODO(), serviceIP, servicePort, destIP, destPort)
+	if err != nil {
+		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
+			Type:  "https://goloba.github.io/problems/internal-server-error",
+			Title: "failed to unlock destination",
+		})
+	}
+	sendOKResponse(w, r, struct {
+		Message     string `json:"message"`
+		Service     string `json:"service"`
+		Destination string `json:"destination"`
+	}{
+		Message:     "unlocked destination",
+		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
+		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
+	})
+	return nil
+}
+
+func parseForm(r *http.Request) *webapputil.HTTPError {
+	err := r.ParseForm()
+	if err != nil {
+		err = ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to parse query and form parameters")
+		}).Stack("")
+		return webapputil.NewHTTPError(err, http.StatusBadRequest, problem.Problem{
+			Type:  "https://goloba.github.io/problems/bad-request",
+			Title: "failed to parse query and form parameters",
+		})
+	}
+	return nil
+}
+
+type invalidParam struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+func getBoolParam(r *http.Request, name string, defaultValue bool) (bool, *webapputil.HTTPError) {
+	strVal := r.Form.Get(name)
+	if strVal == "" {
+		return defaultValue, nil
+	}
+	value, err := strconv.ParseBool(strVal)
+	if err != nil {
+		err = ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to parse boolean value")
+		}).Stack("")
+		return false, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "failed to parse bool parameter",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+	return value, nil
+}
+
+func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.HTTPError) {
+	strVal := r.Form.Get(name)
+	host, portStr, err := net.SplitHostPort(strVal)
+	if err != nil {
+		err = ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("address must be in <IPAddr>:<port> form")
+		}).Stack("")
+		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "failed to parse bool parameter",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		err = ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("address must be in <IPAddr>:<port> form")
+		}).Stack("")
+		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "port must be integer",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+	if port < 0 || 65535 < port {
+		err = ltsvlog.Err(errors.New("bad port in address")).Stack("")
+		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "port must be integer between 0 and 65535",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		err = ltsvlog.Err(errors.New("bad IP address")).Stack("")
+		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "address must be a valid IP address",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+	return ip, uint16(port), nil
+}
+
+func sendOKResponse(w http.ResponseWriter, r *http.Request, detail interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	enc := json.NewEncoder(w)
+	err := enc.Encode(detail)
+	if err != nil {
+		ltsvlog.Err(ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to write ok response; %v", err)
+		}).String("requestID", webapputil.RequestID(r)).Stack(""))
+	}
+}
+
+func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	// ipvsadm output:
 	// [root@lbvm01 ~]# ipvsadm -Ln
 	// IP Virtual Server version 1.2.1 (size=4096)

@@ -43,6 +43,8 @@ type Config struct {
 	StateFile      string          `yaml:"statefile"`
 	VRRP           VRRPConfig      `yaml:"vrrp"`
 	Services       []ServiceConfig `yaml:"services"`
+
+	destinations map[string]*DestinationConfig `yaml:"-"`
 }
 
 // APIConfig is the configuration about API server.
@@ -130,7 +132,20 @@ func LoadConfig(file string) (*Config, error) {
 			return fmt.Errorf("failed to parse config file, err=%v", err)
 		}).String("configFile", file).Stack("")
 	}
+	c.updateDestinations()
 	return &c, nil
+}
+
+func (c *Config) updateDestinations() {
+	c.destinations = make(map[string]*DestinationConfig)
+	for i := range c.Services {
+		s := &c.Services[i]
+		for j := range s.Destinations {
+			dest := &s.Destinations[j]
+			key := destinationKey(net.IP(s.Address), s.Port, net.IP(dest.Address), dest.Port)
+			c.destinations[key] = dest
+		}
+	}
 }
 
 func (c *Config) findService(addr net.IP, port uint16) *ServiceConfig {
@@ -143,17 +158,8 @@ func (c *Config) findService(addr net.IP, port uint16) *ServiceConfig {
 	return nil
 }
 
-func (c *Config) findDestination(addr net.IP, port uint16) *DestinationConfig {
-	for i := range c.Services {
-		s := &c.Services[i]
-		for j := range s.Destinations {
-			dest := &s.Destinations[j]
-			if net.IP(dest.Address).Equal(addr) && dest.Port == port {
-				return dest
-			}
-		}
-	}
-	return nil
+func (c *Config) findDestination(destKey string) *DestinationConfig {
+	return c.destinations[destKey]
 }
 
 func (c *ServiceConfig) findDestination(addr net.IP, port uint16) *DestinationConfig {
@@ -366,26 +372,18 @@ func (l *LoadBalancer) Run(ctx context.Context, listeners []net.Listener) error 
 
 func (l *LoadBalancer) loadConfigOrStateFile(ctx context.Context, config *Config) error {
 	if config.StateFile != "" {
-		buf, err := ioutil.ReadFile(config.StateFile)
-		if err != nil && !os.IsNotExist(err) {
+		configFromState, err := LoadConfig(config.StateFile)
+		if err != nil && !os.IsNotExist(err.(*ltsvlog.Error).OriginalError()) {
 			return ltsvlog.WrapErr(err, func(err error) error {
 				return fmt.Errorf("failed to read state file, err=%v", err)
-			}).String("stateFile", config.StateFile).Stack("")
+			}).String("stateFile", config.StateFile)
 		}
 		if err == nil {
-			var conf Config
-			err = yaml.Unmarshal(buf, &conf)
-			if err != nil {
-				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("failed to parse state file, err=%v", err)
-				}).String("stateFile", config.StateFile).Stack("")
-			}
-
 			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "loaded state file").String("stateFile", config.StateFile).Fmt("conf", "%+v", conf).Log()
+				ltsvlog.Logger.Debug().String("msg", "loaded state file").String("stateFile", config.StateFile).Fmt("conf", "%+v", configFromState).Log()
 			}
 
-			config = &conf
+			config = configFromState
 			ltsvlog.Logger.Info().String("msg", "loading config from state file instead of config file").String("stateFile", config.StateFile).Log()
 		}
 	}
@@ -599,7 +597,7 @@ func (l *LoadBalancer) runHealthCheckLoop(ctx context.Context, config *Config) {
 	for {
 		select {
 		case result := <-l.checkResultC:
-			err := l.attachOrDetachDestination(ctx, config, &result)
+			err := l.attachOrDetachDestinationByHealthCheck(ctx, config, &result)
 			if err != nil {
 				ltsvlog.Logger.Err(err)
 			}
@@ -609,7 +607,7 @@ func (l *LoadBalancer) runHealthCheckLoop(ctx context.Context, config *Config) {
 	}
 }
 
-func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Config, result *healthcheckResult) error {
+func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Context, config *Config, result *healthcheckResult) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -617,7 +615,7 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 	service := dest.service
 	destination := dest.destination
 	if result.OK && result.Err == nil {
-		destConf := config.findDestination(destination.Address, destination.Port)
+		destConf := config.findDestination(result.DestinationKey)
 		if destConf != nil && destination.Weight != destConf.Weight {
 			if destConf.Locked {
 				if ltsvlog.Logger.DebugEnabled() {
@@ -657,7 +655,7 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 				Uint32("weight", destination.Weight).Log()
 		}
 	} else {
-		destConf := config.findDestination(destination.Address, destination.Port)
+		destConf := config.findDestination(result.DestinationKey)
 		if destConf != nil && destination.Weight != 0 {
 			if destConf.Locked {
 				if ltsvlog.Logger.DebugEnabled() {
@@ -694,6 +692,121 @@ func (l *LoadBalancer) attachOrDetachDestination(ctx context.Context, config *Co
 				Stringer("address", destination.Address).
 				Uint16("port", destination.Port).Log()
 		}
+	}
+	return nil
+}
+
+func (l *LoadBalancer) attachOrDetachDestinationByAPI(ctx context.Context, srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16, attach, lock bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	destKey := destinationKey(srcIP, srcPort, destIP, destPort)
+	dest := l.servicesAndDests.findDestination(destKey)
+	if dest == nil {
+		return ltsvlog.Err(errors.New("no destination found")).
+			Stringer("srcIP", srcIP).Uint16("srcPort", srcPort).
+			Stringer("destIP", destIP).Uint16("destPort", destPort).Stack("")
+	}
+	service := dest.service
+	destination := dest.destination
+	if attach {
+		destConf := l.config.findDestination(destKey)
+		if destConf != nil && destination.Weight != destConf.Weight {
+			destination.Weight = destConf.Weight
+			err := l.ipvs.UpdateDestination(service, destination)
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to attach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stringer("fwdMethod", destination.FwdMethod).
+					Uint32("weight", destination.Weight).Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "attached destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Log()
+		}
+		if destConf != nil && (destConf.Detached || destConf.Locked != lock) {
+			destConf.Detached = false
+			destConf.Locked = lock
+			err := l.saveState()
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to save state after attach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "update state file after attach destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Log()
+		}
+	} else {
+		destConf := l.config.findDestination(destKey)
+		if destConf != nil && destination.Weight != 0 {
+			destination.Weight = 0
+			err := l.ipvs.UpdateDestination(service, destination)
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to detach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stringer("fwdMethod", destination.FwdMethod).
+					Uint32("weight", destination.Weight).Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "detached destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Log()
+		}
+		if destConf != nil && (!destConf.Detached || destConf.Locked != lock) {
+			destConf.Detached = true
+			destConf.Locked = lock
+			err := l.saveState()
+			if err != nil {
+				return ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("faild to save state after detach ipvs destination, err=%s", err)
+				}).Stringer("address", destination.Address).
+					Uint16("port", destination.Port).
+					Stack("")
+			}
+			ltsvlog.Logger.Info().String("msg", "update state file after detach destination").
+				Stringer("address", destination.Address).
+				Uint16("port", destination.Port).Log()
+		}
+	}
+	return nil
+}
+
+func (l *LoadBalancer) unlockDestination(ctx context.Context, srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	destKey := destinationKey(srcIP, srcPort, destIP, destPort)
+	dest := l.servicesAndDests.findDestination(destKey)
+	if dest == nil {
+		return ltsvlog.Err(errors.New("no destination found")).
+			Stringer("srcIP", srcIP).Uint16("srcPort", srcPort).
+			Stringer("destIP", destIP).Uint16("destPort", destPort).Stack("")
+	}
+	destConf := l.config.findDestination(destKey)
+	if destConf != nil && destConf.Locked {
+		destConf.Locked = false
+		err := l.saveState()
+		if err != nil {
+			return ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("faild to save state after unlock ipvs destination, err=%s", err)
+			}).Stringer("srcIP", srcIP).Uint16("srcPort", srcPort).
+				Stringer("destIP", destIP).Uint16("destPort", destPort).Stack("")
+		}
+		ltsvlog.Logger.Info().String("msg", "update state file after unlock destination").
+			Stringer("srcIP", srcIP).Uint16("srcPort", srcPort).
+			Stringer("destIP", destIP).Uint16("destPort", destPort).Log()
 	}
 	return nil
 }
