@@ -22,6 +22,8 @@ import (
 	"github.com/mqliang/libipvs"
 )
 
+// MaxWeight is the maximum value for the destination weight.
+// The minimum value is zero.
 const MaxWeight = 65535
 
 // LoadBalancer is the load balancer.
@@ -83,7 +85,7 @@ type ServiceConfig struct {
 type DestinationConfig struct {
 	Address     netutil.IP        `yaml:"address"`
 	Port        uint16            `yaml:"port"`
-	Weight      uint32            `yaml:"weight"`
+	Weight      uint16            `yaml:"weight"`
 	HealthCheck HealthCheckConfig `yaml:"health_check"`
 
 	Detached bool `yaml:"detached"`
@@ -513,7 +515,7 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 			AddressFamily: family,
 			Port:          destConf.Port,
 			FwdMethod:     fwd,
-			Weight:        destConf.Weight,
+			Weight:        uint32(destConf.Weight),
 		}
 		err := l.ipvs.NewDestination(service, destination)
 		if err != nil {
@@ -522,13 +524,13 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 			}).Stringer("address", destConfIP).
 				Uint16("port", destConf.Port).
 				String("fwdMethod", serviceConf.Type).
-				Uint32("weight", destConf.Weight).Stack("")
+				Uint16("weight", destConf.Weight).Stack("")
 		}
 	} else {
 		destination := dest.destination
-		if fwd != destination.FwdMethod || destConf.Weight != destination.Weight {
+		if fwd != destination.FwdMethod || uint32(destConf.Weight) != destination.Weight {
 			destination.FwdMethod = fwd
-			destination.Weight = destConf.Weight
+			destination.Weight = uint32(destConf.Weight)
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
@@ -536,7 +538,7 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 				}).Stringer("address", destConfIP).
 					Uint16("port", destConf.Port).
 					String("fwdMethod", serviceConf.Type).
-					Uint32("weight", destConf.Weight).Stack("")
+					Uint16("weight", destConf.Weight).Stack("")
 			}
 		}
 	}
@@ -618,7 +620,7 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 	destination := dest.destination
 	if result.OK && result.Err == nil {
 		destConf := config.findDestination(result.DestinationKey)
-		if destConf != nil && destination.Weight != destConf.Weight {
+		if destConf != nil && destination.Weight != uint32(destConf.Weight) {
 			if destConf.Locked {
 				if ltsvlog.Logger.DebugEnabled() {
 					ltsvlog.Logger.Debug().String("msg", "skip attaching since destination is locked").Stringer("destAddr", destination.Address).Uint16("destPort", destination.Port).Log()
@@ -626,7 +628,7 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 				return nil
 			}
 
-			destination.Weight = destConf.Weight
+			destination.Weight = uint32(destConf.Weight)
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
@@ -739,7 +741,7 @@ func (l *LoadBalancer) changeWeight(ctx context.Context, srcIP net.IP, srcPort u
 	}
 	if modified {
 		// TOOD: 設定ファイルと状態ファイルを分離する
-		destConf.Weight = uint32(weight)
+		destConf.Weight = weight
 		destConf.Locked = lock
 		err := l.saveState()
 		if err != nil {

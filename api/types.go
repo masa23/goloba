@@ -17,8 +17,8 @@ type Destination struct {
 	Address       string `json:"address"`
 	Port          uint16 `json:"port"`
 	Forward       string `json:"forward"`
-	ConfigWeight  uint32 `json:"config_weight"`
-	CurrentWeight uint32 `json:"current_weight"`
+	ConfigWeight  uint16 `json:"config_weight"`
+	CurrentWeight uint16 `json:"current_weight"`
 	ActiveConn    uint32 `json:"active_conn"`
 	InactiveConn  uint32 `json:"inactive_conn"`
 	Detached      bool   `json:"detached"`

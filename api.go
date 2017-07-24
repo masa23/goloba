@@ -318,7 +318,7 @@ func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
 				Address:       d.Address.String(),
 				Port:          d.Port,
 				Forward:       d.FwdMethod.String(),
-				CurrentWeight: d.Weight,
+				CurrentWeight: uint16(d.Weight),
 				ConfigWeight:  destConf.Weight,
 				ActiveConn:    d.ActiveConns,
 				InactiveConn:  d.InactConns,
