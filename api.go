@@ -26,9 +26,6 @@ type apiServer struct {
 
 func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listener) {
 	mux := http.NewServeMux()
-	mux.Handle("/attach", wrapWithErrHandler(l.handleAttach))
-	mux.Handle("/detach", wrapWithErrHandler(l.handleDetach))
-	mux.Handle("/unlock", wrapWithErrHandler(l.handleUnlock))
 	mux.Handle("/weight", wrapWithErrHandler(l.handleWeight))
 	mux.HandleFunc("/info", l.handleInfo)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -136,114 +133,6 @@ func (l *LoadBalancer) handleWeight(w http.ResponseWriter, r *http.Request) *web
 		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
 		Weight:      weight,
 		Locked:      lock,
-	})
-	return nil
-}
-
-func (l *LoadBalancer) handleAttach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
-	hErr := parseForm(r)
-	if hErr != nil {
-		return hErr
-	}
-	serviceIP, servicePort, hErr := getAddressParam(r, "service")
-	if hErr != nil {
-		return hErr
-	}
-	destIP, destPort, hErr := getAddressParam(r, "dest")
-	if hErr != nil {
-		return hErr
-	}
-	lock, hErr := getBoolParam(r, "lock", true)
-	if hErr != nil {
-		return hErr
-	}
-	err := l.attachOrDetachDestinationByAPI(context.TODO(), serviceIP, servicePort, destIP, destPort, true, lock)
-	if err != nil {
-		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
-			Type:  "https://goloba.github.io/problems/internal-server-error",
-			Title: "failed to attach destination",
-		})
-	}
-	sendOKResponse(w, r, struct {
-		Message     string `json:"message"`
-		Service     string `json:"service"`
-		Destination string `json:"destination"`
-		Locked      bool   `json:"locked"`
-	}{
-		Message:     "attached destination",
-		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
-		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
-		Locked:      lock,
-	})
-	return nil
-}
-
-func (l *LoadBalancer) handleDetach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
-	hErr := parseForm(r)
-	if hErr != nil {
-		return hErr
-	}
-	serviceIP, servicePort, hErr := getAddressParam(r, "service")
-	if hErr != nil {
-		return hErr
-	}
-	destIP, destPort, hErr := getAddressParam(r, "dest")
-	if hErr != nil {
-		return hErr
-	}
-	lock, hErr := getBoolParam(r, "lock", true)
-	if hErr != nil {
-		return hErr
-	}
-	err := l.attachOrDetachDestinationByAPI(context.TODO(), serviceIP, servicePort, destIP, destPort, false, lock)
-	if err != nil {
-		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
-			Type:  "https://goloba.github.io/problems/internal-server-error",
-			Title: "failed to detach destination",
-		})
-	}
-	sendOKResponse(w, r, struct {
-		Message     string `json:"message"`
-		Service     string `json:"service"`
-		Destination string `json:"destination"`
-		Locked      bool   `json:"locked"`
-	}{
-		Message:     "detached destination",
-		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
-		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
-		Locked:      lock,
-	})
-	return nil
-}
-
-func (l *LoadBalancer) handleUnlock(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
-	hErr := parseForm(r)
-	if hErr != nil {
-		return hErr
-	}
-	serviceIP, servicePort, hErr := getAddressParam(r, "service")
-	if hErr != nil {
-		return hErr
-	}
-	destIP, destPort, hErr := getAddressParam(r, "dest")
-	if hErr != nil {
-		return hErr
-	}
-	err := l.unlockDestination(context.TODO(), serviceIP, servicePort, destIP, destPort)
-	if err != nil {
-		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
-			Type:  "https://goloba.github.io/problems/internal-server-error",
-			Title: "failed to unlock destination",
-		})
-	}
-	sendOKResponse(w, r, struct {
-		Message     string `json:"message"`
-		Service     string `json:"service"`
-		Destination string `json:"destination"`
-	}{
-		Message:     "unlocked destination",
-		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
-		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
 	})
 	return nil
 }
