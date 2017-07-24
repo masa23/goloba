@@ -17,6 +17,7 @@ import (
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
+	"github.com/masa23/goloba"
 	"github.com/masa23/goloba/api"
 )
 
@@ -26,6 +27,7 @@ Commands:
   info     show information
   detach   manually detach destination
   attach   manually attach destination
+  weight   change destination weight
 
 Globals Options:
 `
@@ -78,6 +80,8 @@ func main() {
 		app.attachCommand(args[1:])
 	case "unlock":
 		app.unlockCommand(args[1:])
+	case "weight":
+		app.weightCommand(args[1:])
 	default:
 		flag.Usage()
 		os.Exit(1)
@@ -182,6 +186,48 @@ func (a *cliApp) infoCommand(args []string) {
 				}
 				os.Stdout.Write(buf)
 			}
+		}()
+	}
+	wg.Wait()
+}
+
+func (a *cliApp) weightCommand(args []string) {
+	fs := flag.NewFlagSet("weight", flag.ExitOnError)
+	fs.Usage = subcommandUsageFunc("weight", fs)
+	serviceAddr := fs.String("s", "", "service address in <IPAddress>:<port> form")
+	destAddr := fs.String("d", "", "destination address in <IPAddress>:<port> form")
+	weight := fs.Uint("w", 100, fmt.Sprintf("destination weight 0-%d", goloba.MaxWeight))
+	lock := fs.Bool("lock", false, "lock weight regardless of future healthcheck results")
+	fs.Parse(args)
+
+	if goloba.MaxWeight < *weight {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	var wg sync.WaitGroup
+	for _, s := range a.config.APIServers {
+		wg.Add(1)
+		s := s
+		go func() {
+			defer wg.Done()
+
+			u := fmt.Sprintf("%s/weight?service=%s&dest=%s&weight=%d&lock=%v",
+				s.URL, url.QueryEscape(*serviceAddr), url.QueryEscape(*destAddr), *weight, *lock)
+			resp, err := a.httpClient.Get(u)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to send request; %v\n", err)
+				return
+			}
+			defer resp.Body.Close()
+
+			data, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				ltsvlog.Err(ltsvlog.WrapErr(err, func(err error) error {
+					return fmt.Errorf("failed to read response from goloba API server")
+				}).String("serverURL", s.URL).Stack(""))
+			}
+			fmt.Printf("%s:\n%s\n", s.URL, string(data))
 		}()
 	}
 	wg.Wait()

@@ -22,6 +22,8 @@ import (
 	"github.com/mqliang/libipvs"
 )
 
+const MaxWeight = 65535
+
 // LoadBalancer is the load balancer.
 type LoadBalancer struct {
 	ipvs             libipvs.IPVSHandle
@@ -696,6 +698,65 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 	return nil
 }
 
+func (l *LoadBalancer) changeWeight(ctx context.Context, srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16, weight uint16, lock bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	destKey := destinationKey(srcIP, srcPort, destIP, destPort)
+	dest := l.servicesAndDests.findDestination(destKey)
+	if dest == nil {
+		return ltsvlog.Err(errors.New("no destination found")).
+			Stringer("srcIP", srcIP).Uint16("srcPort", srcPort).
+			Stringer("destIP", destIP).Uint16("destPort", destPort).Stack("")
+	}
+	service := dest.service
+	destination := dest.destination
+	destConf := l.config.findDestination(destKey)
+	if destConf == nil {
+		return ltsvlog.Err(errors.New("no destination config found")).
+			Stringer("srcIP", srcIP).Uint16("srcPort", srcPort).
+			Stringer("destIP", destIP).Uint16("destPort", destPort).Stack("")
+	}
+
+	weightModified := destination.Weight != uint32(weight)
+	modified := weightModified || destConf.Locked != lock
+	if weightModified {
+		destination.Weight = uint32(weight)
+		err := l.ipvs.UpdateDestination(service, destination)
+		if err != nil {
+			return ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("faild to attach ipvs destination, err=%s", err)
+			}).Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stringer("fwdMethod", destination.FwdMethod).
+				Uint32("weight", destination.Weight).Stack("")
+		}
+		ltsvlog.Logger.Info().String("msg", "attached destination").
+			Stringer("address", destination.Address).
+			Uint16("port", destination.Port).
+			Stringer("fwdMethod", destination.FwdMethod).
+			Uint32("weight", destination.Weight).Log()
+	}
+	if modified {
+		// TOOD: 設定ファイルと状態ファイルを分離する
+		destConf.Weight = uint32(weight)
+		destConf.Locked = lock
+		err := l.saveState()
+		if err != nil {
+			return ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("faild to save state after attach ipvs destination, err=%s", err)
+			}).Stringer("address", destination.Address).
+				Uint16("port", destination.Port).
+				Stack("")
+		}
+		ltsvlog.Logger.Info().String("msg", "update state file after attach destination").
+			Stringer("address", destination.Address).
+			Uint16("port", destination.Port).
+			Stringer("fwdMethod", destination.FwdMethod).
+			Uint32("weight", destination.Weight).Log()
+	}
+	return nil
+}
 func (l *LoadBalancer) attachOrDetachDestinationByAPI(ctx context.Context, srcIP net.IP, srcPort uint16, destIP net.IP, destPort uint16, attach, lock bool) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

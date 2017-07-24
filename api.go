@@ -29,6 +29,7 @@ func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listene
 	mux.Handle("/attach", wrapWithErrHandler(l.handleAttach))
 	mux.Handle("/detach", wrapWithErrHandler(l.handleDetach))
 	mux.Handle("/unlock", wrapWithErrHandler(l.handleUnlock))
+	mux.Handle("/weight", wrapWithErrHandler(l.handleWeight))
 	mux.HandleFunc("/info", l.handleInfo)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -93,6 +94,50 @@ func errorHandler(hErr *webapputil.HTTPError, w http.ResponseWriter, r *http.Req
 			return fmt.Errorf("failed to send problem; %v", err)
 		}))
 	}
+}
+
+func (l *LoadBalancer) handleWeight(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
+	hErr := parseForm(r)
+	if hErr != nil {
+		return hErr
+	}
+	serviceIP, servicePort, hErr := getAddressParam(r, "service")
+	if hErr != nil {
+		return hErr
+	}
+	destIP, destPort, hErr := getAddressParam(r, "dest")
+	if hErr != nil {
+		return hErr
+	}
+	weight, hErr := getWeightParam(r, "weight")
+	if hErr != nil {
+		return hErr
+	}
+	lock, hErr := getBoolParam(r, "lock", false)
+	if hErr != nil {
+		return hErr
+	}
+	err := l.changeWeight(context.TODO(), serviceIP, servicePort, destIP, destPort, uint16(weight), lock)
+	if err != nil {
+		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
+			Type:  "https://goloba.github.io/problems/internal-server-error",
+			Title: "failed to change weight of destination",
+		})
+	}
+	sendOKResponse(w, r, struct {
+		Message     string `json:"message"`
+		Service     string `json:"service"`
+		Destination string `json:"destination"`
+		Weight      uint16 `json:"weight"`
+		Locked      bool   `json:"locked"`
+	}{
+		Message:     "attached destination",
+		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
+		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
+		Weight:      weight,
+		Locked:      lock,
+	})
+	return nil
 }
 
 func (l *LoadBalancer) handleAttach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
@@ -231,7 +276,7 @@ func getBoolParam(r *http.Request, name string, defaultValue bool) (bool, *webap
 	if err != nil {
 		err = ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to parse boolean value")
-		}).Stack("")
+		}).String("name", name).String("value", strVal).Stack("")
 		return false, webapputil.NewHTTPError(err, http.StatusBadRequest,
 			struct {
 				problem.Problem
@@ -254,8 +299,8 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 	host, portStr, err := net.SplitHostPort(strVal)
 	if err != nil {
 		err = ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("address must be in <IPAddr>:<port> form")
-		}).Stack("")
+			return fmt.Errorf("address must be in <IPAddr>:<port> form; %v", err)
+		}).String("name", name).String("value", strVal).Stack("")
 		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
 			struct {
 				problem.Problem
@@ -273,7 +318,7 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		err = ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("address must be in <IPAddr>:<port> form")
+			return fmt.Errorf("address must be in <IPAddr>:<port> form; %v", err)
 		}).Stack("")
 		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
 			struct {
@@ -282,7 +327,7 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 			}{
 				Problem: problem.Problem{
 					Type:  "https://goloba.github.io/problems/bad-request",
-					Title: "port must be integer",
+					Title: "port must be integer between 0 and 65535",
 				},
 				InvalidParams: []invalidParam{
 					{Name: name, Value: strVal},
@@ -324,6 +369,30 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 			})
 	}
 	return ip, uint16(port), nil
+}
+
+func getWeightParam(r *http.Request, name string) (uint16, *webapputil.HTTPError) {
+	strVal := r.Form.Get(name)
+	val, err := strconv.ParseUint(strVal, 10, 16)
+	if err != nil {
+		err = ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("weight must be uint16 integer; %v", err)
+		}).String("name", name).String("value", strVal).Stack("")
+		return 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "weight must be integer between 0 and 65535",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+	return uint16(val), nil
 }
 
 func sendOKResponse(w http.ResponseWriter, r *http.Request, detail interface{}) {
