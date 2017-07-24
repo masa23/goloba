@@ -162,21 +162,21 @@ func (a *cliApp) infoCommand(args []string) {
 				// goloba output:
 				// [root@lbvm01 ~]# curl localhost:8880/info
 				// Prot LocalAddress:Port Scheduler Flags
-				//   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn Detached Locked
+				//   -> RemoteAddress:Port           Forward CfgWeight CurWeight ActiveConn InActConn Detached Locked
 				// tcp  192.168.122.2:80 wrr
-				//   -> 192.168.122.62:80            droute  100    0          0         true     false
-				//   -> 192.168.122.240:80           droute  500    0          0         false    false
+				//   -> 192.168.122.62:80            droute  100       100       0          0         true     false
+				//   -> 192.168.122.240:80           droute  500       500       0          0         false    false
 				// tcp  192.168.122.2:443 wrr
-				//   -> 192.168.122.62:443           masq    10     0          0         true     false
-				//   -> 192.168.122.240:443          masq    20     0          0         false    false
+				//   -> 192.168.122.62:443           masq    10        0         0          0         true     false
+				//   -> 192.168.122.240:443          masq    20        20        0          0         false    false
 				fmt.Printf("%s:\n", s.URL)
 				fmt.Printf("Prot LocalAddress:Port Scheduler Flags\n")
-				fmt.Printf("  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn Detached Locked\n")
+				fmt.Printf("  -> RemoteAddress:Port           Forward CurWeight CfgWeight ActiveConn InActConn Detached Locked\n")
 				for _, sr := range info.Services {
 					fmt.Printf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)
 					for _, d := range sr.Destinations {
 						hostPort := net.JoinHostPort(d.Address, strconv.Itoa(int(d.Port)))
-						fmt.Printf("  -> %-28s %-7s %-6d %-10d %-9d %-8v %v\n", hostPort, d.Forward, d.Weight, d.ActiveConn, d.InactiveConn, d.Detached, d.Locked)
+						fmt.Printf("  -> %-28s %-7s %-9d %-9d %-10d %-9d %-8v %v\n", hostPort, d.Forward, d.ConfigWeight, d.CurrentWeight, d.ActiveConn, d.InactiveConn, d.Detached, d.Locked)
 					}
 				}
 				fmt.Println()

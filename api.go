@@ -357,14 +357,15 @@ func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
 			d := dest.destination
 			destConf := serviceConf.findDestination(d.Address, d.Port)
 			info.Services[i].Destinations[j] = api.Destination{
-				Address:      d.Address.String(),
-				Port:         d.Port,
-				Forward:      d.FwdMethod.String(),
-				Weight:       destConf.Weight,
-				ActiveConn:   d.ActiveConns,
-				InactiveConn: d.InactConns,
-				Detached:     destConf.Detached,
-				Locked:       destConf.Locked,
+				Address:       d.Address.String(),
+				Port:          d.Port,
+				Forward:       d.FwdMethod.String(),
+				CurrentWeight: d.Weight,
+				ConfigWeight:  destConf.Weight,
+				ActiveConn:    d.ActiveConns,
+				InactiveConn:  d.InactConns,
+				Detached:      destConf.Detached,
+				Locked:        destConf.Locked,
 			}
 		}
 	}
