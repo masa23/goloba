@@ -169,17 +169,18 @@ func (a *cliApp) infoCommand(args []string) {
 				// tcp  192.168.122.2:443 wrr
 				//   -> 192.168.122.62:443           masq    10        0         0          0         true     false
 				//   -> 192.168.122.240:443          masq    20        20        0          0         false    false
-				fmt.Printf("%s:\n", s.URL)
-				fmt.Printf("Prot LocalAddress:Port Scheduler Flags\n")
-				fmt.Printf("  -> RemoteAddress:Port           Forward CurWeight CfgWeight ActiveConn InActConn Detached Locked\n")
+				var buf []byte
+				buf = append(append(buf, s.URL...), '\n')
+				buf = append(buf, "Prot LocalAddress:Port Scheduler Flags\n"...)
+				buf = append(buf, "  -> RemoteAddress:Port           Forward CfgWeight CurWeight ActiveConn InActConn Detached Locked\n"...)
 				for _, sr := range info.Services {
-					fmt.Printf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)
+					buf = append(buf, fmt.Sprintf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)...)
 					for _, d := range sr.Destinations {
 						hostPort := net.JoinHostPort(d.Address, strconv.Itoa(int(d.Port)))
-						fmt.Printf("  -> %-28s %-7s %-9d %-9d %-10d %-9d %-8v %v\n", hostPort, d.Forward, d.ConfigWeight, d.CurrentWeight, d.ActiveConn, d.InactiveConn, d.Detached, d.Locked)
+						buf = append(buf, fmt.Sprintf("  -> %-28s %-7s %-9d %-9d %-10d %-9d %-8v %v\n", hostPort, d.Forward, d.ConfigWeight, d.CurrentWeight, d.ActiveConn, d.InactiveConn, d.Detached, d.Locked)...)
 					}
 				}
-				fmt.Println()
+				os.Stdout.Write(buf)
 			}
 		}()
 	}
