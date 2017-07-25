@@ -14,12 +14,13 @@ type Service struct {
 }
 
 type Destination struct {
-	Address      string `json:"address"`
-	Port         uint16 `json:"port"`
-	Forward      string `json:"forward"`
-	Weight       uint32 `json:"weight"`
-	ActiveConn   uint32 `json:"active_conn"`
-	InactiveConn uint32 `json:"inactive_conn"`
-	Detached     bool   `json:"detached"`
-	Locked       bool   `json:"locked"`
+	Address       string `json:"address"`
+	Port          uint16 `json:"port"`
+	Forward       string `json:"forward"`
+	ConfigWeight  uint16 `json:"config_weight"`
+	CurrentWeight uint16 `json:"current_weight"`
+	ActiveConn    uint32 `json:"active_conn"`
+	InactiveConn  uint32 `json:"inactive_conn"`
+	Detached      bool   `json:"detached"`
+	Locked        bool   `json:"locked"`
 }

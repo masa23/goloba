@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/hnakamur/ltsvlog"
+	"github.com/masa23/goloba"
 	"github.com/masa23/goloba/api"
 )
 
@@ -24,8 +24,7 @@ const (
 	usage = `Usage argtest [GlobalOptions] <Command> [Options]
 Commands:
   info     show information
-  detach   manually detach destination
-  attach   manually attach destination
+  weight   change destination weight
 
 Globals Options:
 `
@@ -72,12 +71,8 @@ func main() {
 	switch args[0] {
 	case "info":
 		app.infoCommand(args[1:])
-	case "detach":
-		app.detachCommand(args[1:])
-	case "attach":
-		app.attachCommand(args[1:])
-	case "unlock":
-		app.unlockCommand(args[1:])
+	case "weight":
+		app.weightCommand(args[1:])
 	default:
 		flag.Usage()
 		os.Exit(1)
@@ -162,37 +157,44 @@ func (a *cliApp) infoCommand(args []string) {
 				// goloba output:
 				// [root@lbvm01 ~]# curl localhost:8880/info
 				// Prot LocalAddress:Port Scheduler Flags
-				//   -> RemoteAddress:Port           Forward Weight ActiveConn InActConn Detached Locked
+				//   -> RemoteAddress:Port           Forward CfgWeight CurWeight Detached Locked ActiveConn InActConn
 				// tcp  192.168.122.2:80 wrr
-				//   -> 192.168.122.62:80            droute  100    0          0         true     false
-				//   -> 192.168.122.240:80           droute  500    0          0         false    false
+				//   -> 192.168.122.62:80            droute  100       100       true     false  0          0
+				//   -> 192.168.122.240:80           droute  500       500       false    false  0          0
 				// tcp  192.168.122.2:443 wrr
-				//   -> 192.168.122.62:443           masq    10     0          0         true     false
-				//   -> 192.168.122.240:443          masq    20     0          0         false    false
-				fmt.Printf("%s:\n", s.URL)
-				fmt.Printf("Prot LocalAddress:Port Scheduler Flags\n")
-				fmt.Printf("  -> RemoteAddress:Port           Forward Weight ActiveConn InActConn Detached Locked\n")
+				//   -> 192.168.122.62:443           masq    10        0         true     false  0          0
+				//   -> 192.168.122.240:443          masq    20        20        false    false  0          0
+				var buf []byte
+				buf = append(append(buf, s.URL...), '\n')
+				buf = append(buf, "Prot LocalAddress:Port Scheduler Flags\n"...)
+				buf = append(buf, "  -> RemoteAddress:Port           Forward CfgWeight CurWeight Detached Locked ActiveConn InActConn\n"...)
 				for _, sr := range info.Services {
-					fmt.Printf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)
+					buf = append(buf, fmt.Sprintf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)...)
 					for _, d := range sr.Destinations {
 						hostPort := net.JoinHostPort(d.Address, strconv.Itoa(int(d.Port)))
-						fmt.Printf("  -> %-28s %-7s %-6d %-10d %-9d %-8v %v\n", hostPort, d.Forward, d.Weight, d.ActiveConn, d.InactiveConn, d.Detached, d.Locked)
+						buf = append(buf, fmt.Sprintf("  -> %-28s %-7s %-9d %-9d %-8v %-6v %-10d %-9d\n", hostPort, d.Forward, d.ConfigWeight, d.CurrentWeight, d.Detached, d.Locked, d.ActiveConn, d.InactiveConn)...)
 					}
 				}
-				fmt.Println()
+				os.Stdout.Write(buf)
 			}
 		}()
 	}
 	wg.Wait()
 }
 
-func (a *cliApp) attachCommand(args []string) {
-	fs := flag.NewFlagSet("attach", flag.ExitOnError)
-	fs.Usage = subcommandUsageFunc("attach", fs)
+func (a *cliApp) weightCommand(args []string) {
+	fs := flag.NewFlagSet("weight", flag.ExitOnError)
+	fs.Usage = subcommandUsageFunc("weight", fs)
 	serviceAddr := fs.String("s", "", "service address in <IPAddress>:<port> form")
 	destAddr := fs.String("d", "", "destination address in <IPAddress>:<port> form")
-	lock := fs.Bool("lock", true, "lock attach or detach regardless of future healthcheck results")
+	weight := fs.Uint("w", 100, fmt.Sprintf("destination weight 0-%d", goloba.MaxWeight))
+	lock := fs.Bool("lock", false, "lock weight regardless of future healthcheck results")
 	fs.Parse(args)
+
+	if goloba.MaxWeight < *weight {
+		fs.Usage()
+		os.Exit(1)
+	}
 
 	var wg sync.WaitGroup
 	for _, s := range a.config.APIServers {
@@ -201,8 +203,8 @@ func (a *cliApp) attachCommand(args []string) {
 		go func() {
 			defer wg.Done()
 
-			u := fmt.Sprintf("%s/attach?service=%s&dest=%s&lock=%v",
-				s.URL, url.QueryEscape(*serviceAddr), url.QueryEscape(*destAddr), *lock)
+			u := fmt.Sprintf("%s/weight?service=%s&dest=%s&weight=%d&lock=%v",
+				s.URL, url.QueryEscape(*serviceAddr), url.QueryEscape(*destAddr), *weight, *lock)
 			resp, err := a.httpClient.Get(u)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "failed to send request; %v\n", err)
@@ -217,71 +219,6 @@ func (a *cliApp) attachCommand(args []string) {
 				}).String("serverURL", s.URL).Stack(""))
 			}
 			fmt.Printf("%s:\n%s\n", s.URL, string(data))
-		}()
-	}
-	wg.Wait()
-}
-
-func (a *cliApp) detachCommand(args []string) {
-	fs := flag.NewFlagSet("detach", flag.ExitOnError)
-	fs.Usage = subcommandUsageFunc("detach", fs)
-	serviceAddr := fs.String("s", "", "service address in <IPAddress>:<port> form")
-	destAddr := fs.String("d", "", "destination address in <IPAddress>:<port> form")
-	lock := fs.Bool("lock", true, "lock detach or detach regardless of future healthcheck results")
-	fs.Parse(args)
-
-	var wg sync.WaitGroup
-	for _, s := range a.config.APIServers {
-		wg.Add(1)
-		s := s
-		go func() {
-			defer wg.Done()
-
-			u := fmt.Sprintf("%s/detach?service=%s&dest=%s&lock=%v",
-				s.URL, url.QueryEscape(*serviceAddr), url.QueryEscape(*destAddr), *lock)
-			resp, err := a.httpClient.Get(u)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to send request; %v\n", err)
-				return
-			}
-			defer resp.Body.Close()
-
-			data, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				ltsvlog.Err(ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("failed to read response from goloba API server")
-				}).String("serverURL", s.URL).Stack(""))
-			}
-			fmt.Printf("%s:\n%s\n", s.URL, string(data))
-		}()
-	}
-	wg.Wait()
-}
-
-func (a *cliApp) unlockCommand(args []string) {
-	fs := flag.NewFlagSet("unlock", flag.ExitOnError)
-	fs.Usage = subcommandUsageFunc("unlock", fs)
-	serviceAddr := fs.String("s", "", "service address in <IPAddress>:<port> form")
-	destAddr := fs.String("d", "", "destination address in <IPAddress>:<port> form")
-	fs.Parse(args)
-
-	var wg sync.WaitGroup
-	for _, s := range a.config.APIServers {
-		wg.Add(1)
-		s := s
-		go func() {
-			defer wg.Done()
-
-			u := fmt.Sprintf("%s/unlock?service=%s&dest=%s",
-				s.URL, url.QueryEscape(*serviceAddr), url.QueryEscape(*destAddr))
-			resp, err := a.httpClient.Get(u)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed to send request; %v\n", err)
-				return
-			}
-			defer resp.Body.Close()
-
-			io.Copy(os.Stdout, resp.Body)
 		}()
 	}
 	wg.Wait()

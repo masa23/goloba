@@ -5,11 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/hnakamur/ltsvlog"
@@ -39,35 +37,9 @@ func main() {
 	pid := os.Getpid()
 	starter := serverstarter.New()
 	if starter.IsMaster() {
-		ltsvlog.Logger.Info().String("msg", "goloba master started!").Int("pid", pid).Log()
-		if conf.PidFile != "" {
-			data := strconv.AppendInt(nil, int64(pid), 10)
-			err = ioutil.WriteFile(conf.PidFile, data, 0666)
-			if err != nil {
-				ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("failed to write pid file; %v", err)
-				}).String("pidFile", conf.PidFile))
-				os.Exit(2)
-			}
-		}
-
-		var listeners []net.Listener
-		if conf.API.ListenAddress != "" {
-			ln, err := net.Listen("tcp", conf.API.ListenAddress)
-			if err != nil {
-				ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("failed to listen address; %v", err)
-				}).String("listenAddress", conf.API.ListenAddress))
-				os.Exit(2)
-			}
-			listeners = append(listeners, ln)
-		}
-
-		err = starter.RunMaster(listeners...)
+		err = runMaster(starter, conf, pid)
 		if err != nil {
-			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-				return fmt.Errorf("failed to run master; %v", err)
-			}).String("listenAddress", conf.API.ListenAddress))
+			ltsvlog.Logger.Err(err)
 			os.Exit(2)
 		}
 		return
@@ -114,4 +86,51 @@ func main() {
 	cancel()
 	<-done
 	ltsvlog.Logger.Info().String("msg", "exiting main").Log()
+}
+
+func runMaster(starter *serverstarter.Starter, conf *goloba.Config, pid int) error {
+	err := writePIDFile(conf.PIDFile, pid)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(conf.PIDFile)
+
+	ltsvlog.Logger.Info().String("msg", "goloba master started!").Int("pid", pid).Log()
+
+	var listeners []net.Listener
+	if conf.API.ListenAddress != "" {
+		ln, err := net.Listen("tcp", conf.API.ListenAddress)
+		if err != nil {
+			return ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to listen address; %v", err)
+			}).String("listenAddress", conf.API.ListenAddress)
+		}
+		listeners = append(listeners, ln)
+	}
+
+	err = starter.RunMaster(listeners...)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to run master; %v", err)
+		}).String("listenAddress", conf.API.ListenAddress)
+	}
+	return nil
+}
+
+func writePIDFile(path string, pid int) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to open PID file for writing; %v", err)
+		}).Stack("")
+	}
+	defer file.Close()
+
+	_, err = fmt.Fprintf(file, "%d\n", pid)
+	if err != nil {
+		return ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("failed to write PID file; %v", err)
+		}).Stack("")
+	}
+	return nil
 }

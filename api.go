@@ -26,9 +26,7 @@ type apiServer struct {
 
 func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listener) {
 	mux := http.NewServeMux()
-	mux.Handle("/attach", wrapWithErrHandler(l.handleAttach))
-	mux.Handle("/detach", wrapWithErrHandler(l.handleDetach))
-	mux.Handle("/unlock", wrapWithErrHandler(l.handleUnlock))
+	mux.Handle("/weight", wrapWithErrHandler(l.handleWeight))
 	mux.HandleFunc("/info", l.handleInfo)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -95,7 +93,7 @@ func errorHandler(hErr *webapputil.HTTPError, w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (l *LoadBalancer) handleAttach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
+func (l *LoadBalancer) handleWeight(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
 	hErr := parseForm(r)
 	if hErr != nil {
 		return hErr
@@ -108,97 +106,33 @@ func (l *LoadBalancer) handleAttach(w http.ResponseWriter, r *http.Request) *web
 	if hErr != nil {
 		return hErr
 	}
-	lock, hErr := getBoolParam(r, "lock", true)
+	weight, hErr := getWeightParam(r, "weight")
 	if hErr != nil {
 		return hErr
 	}
-	err := l.attachOrDetachDestinationByAPI(context.TODO(), serviceIP, servicePort, destIP, destPort, true, lock)
+	lock, hErr := getBoolParam(r, "lock", false)
+	if hErr != nil {
+		return hErr
+	}
+	err := l.changeWeight(context.TODO(), serviceIP, servicePort, destIP, destPort, uint16(weight), lock)
 	if err != nil {
 		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
 			Type:  "https://goloba.github.io/problems/internal-server-error",
-			Title: "failed to attach destination",
+			Title: "failed to change weight of destination",
 		})
 	}
 	sendOKResponse(w, r, struct {
 		Message     string `json:"message"`
 		Service     string `json:"service"`
 		Destination string `json:"destination"`
+		Weight      uint16 `json:"weight"`
 		Locked      bool   `json:"locked"`
 	}{
 		Message:     "attached destination",
 		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
 		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
+		Weight:      weight,
 		Locked:      lock,
-	})
-	return nil
-}
-
-func (l *LoadBalancer) handleDetach(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
-	hErr := parseForm(r)
-	if hErr != nil {
-		return hErr
-	}
-	serviceIP, servicePort, hErr := getAddressParam(r, "service")
-	if hErr != nil {
-		return hErr
-	}
-	destIP, destPort, hErr := getAddressParam(r, "dest")
-	if hErr != nil {
-		return hErr
-	}
-	lock, hErr := getBoolParam(r, "lock", true)
-	if hErr != nil {
-		return hErr
-	}
-	err := l.attachOrDetachDestinationByAPI(context.TODO(), serviceIP, servicePort, destIP, destPort, false, lock)
-	if err != nil {
-		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
-			Type:  "https://goloba.github.io/problems/internal-server-error",
-			Title: "failed to detach destination",
-		})
-	}
-	sendOKResponse(w, r, struct {
-		Message     string `json:"message"`
-		Service     string `json:"service"`
-		Destination string `json:"destination"`
-		Locked      bool   `json:"locked"`
-	}{
-		Message:     "detached destination",
-		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
-		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
-		Locked:      lock,
-	})
-	return nil
-}
-
-func (l *LoadBalancer) handleUnlock(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError {
-	hErr := parseForm(r)
-	if hErr != nil {
-		return hErr
-	}
-	serviceIP, servicePort, hErr := getAddressParam(r, "service")
-	if hErr != nil {
-		return hErr
-	}
-	destIP, destPort, hErr := getAddressParam(r, "dest")
-	if hErr != nil {
-		return hErr
-	}
-	err := l.unlockDestination(context.TODO(), serviceIP, servicePort, destIP, destPort)
-	if err != nil {
-		return webapputil.NewHTTPError(err, http.StatusInternalServerError, problem.Problem{
-			Type:  "https://goloba.github.io/problems/internal-server-error",
-			Title: "failed to unlock destination",
-		})
-	}
-	sendOKResponse(w, r, struct {
-		Message     string `json:"message"`
-		Service     string `json:"service"`
-		Destination string `json:"destination"`
-	}{
-		Message:     "unlocked destination",
-		Service:     fmt.Sprintf("%s:%d", serviceIP, servicePort),
-		Destination: fmt.Sprintf("%s:%d", destIP, destPort),
 	})
 	return nil
 }
@@ -231,7 +165,7 @@ func getBoolParam(r *http.Request, name string, defaultValue bool) (bool, *webap
 	if err != nil {
 		err = ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to parse boolean value")
-		}).Stack("")
+		}).String("name", name).String("value", strVal).Stack("")
 		return false, webapputil.NewHTTPError(err, http.StatusBadRequest,
 			struct {
 				problem.Problem
@@ -254,8 +188,8 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 	host, portStr, err := net.SplitHostPort(strVal)
 	if err != nil {
 		err = ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("address must be in <IPAddr>:<port> form")
-		}).Stack("")
+			return fmt.Errorf("address must be in <IPAddr>:<port> form; %v", err)
+		}).String("name", name).String("value", strVal).Stack("")
 		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
 			struct {
 				problem.Problem
@@ -273,7 +207,7 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		err = ltsvlog.WrapErr(err, func(err error) error {
-			return fmt.Errorf("address must be in <IPAddr>:<port> form")
+			return fmt.Errorf("address must be in <IPAddr>:<port> form; %v", err)
 		}).Stack("")
 		return nil, 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
 			struct {
@@ -282,7 +216,7 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 			}{
 				Problem: problem.Problem{
 					Type:  "https://goloba.github.io/problems/bad-request",
-					Title: "port must be integer",
+					Title: "port must be integer between 0 and 65535",
 				},
 				InvalidParams: []invalidParam{
 					{Name: name, Value: strVal},
@@ -326,6 +260,30 @@ func getAddressParam(r *http.Request, name string) (net.IP, uint16, *webapputil.
 	return ip, uint16(port), nil
 }
 
+func getWeightParam(r *http.Request, name string) (uint16, *webapputil.HTTPError) {
+	strVal := r.Form.Get(name)
+	val, err := strconv.ParseUint(strVal, 10, 16)
+	if err != nil {
+		err = ltsvlog.WrapErr(err, func(err error) error {
+			return fmt.Errorf("weight must be uint16 integer; %v", err)
+		}).String("name", name).String("value", strVal).Stack("")
+		return 0, webapputil.NewHTTPError(err, http.StatusBadRequest,
+			struct {
+				problem.Problem
+				InvalidParams []invalidParam `json:"invalid-params"`
+			}{
+				Problem: problem.Problem{
+					Type:  "https://goloba.github.io/problems/bad-request",
+					Title: "weight must be integer between 0 and 65535",
+				},
+				InvalidParams: []invalidParam{
+					{Name: name, Value: strVal},
+				},
+			})
+	}
+	return uint16(val), nil
+}
+
 func sendOKResponse(w http.ResponseWriter, r *http.Request, detail interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -357,14 +315,15 @@ func (l *LoadBalancer) handleInfo(w http.ResponseWriter, r *http.Request) {
 			d := dest.destination
 			destConf := serviceConf.findDestination(d.Address, d.Port)
 			info.Services[i].Destinations[j] = api.Destination{
-				Address:      d.Address.String(),
-				Port:         d.Port,
-				Forward:      d.FwdMethod.String(),
-				Weight:       destConf.Weight,
-				ActiveConn:   d.ActiveConns,
-				InactiveConn: d.InactConns,
-				Detached:     destConf.Detached,
-				Locked:       destConf.Locked,
+				Address:       d.Address.String(),
+				Port:          d.Port,
+				Forward:       d.FwdMethod.String(),
+				CurrentWeight: uint16(d.Weight),
+				ConfigWeight:  destConf.Weight,
+				ActiveConn:    d.ActiveConns,
+				InactiveConn:  d.InactConns,
+				Detached:      destConf.Detached,
+				Locked:        destConf.Locked,
 			}
 		}
 	}

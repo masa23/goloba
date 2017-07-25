@@ -62,17 +62,17 @@ func (s *Starter) RunMaster(listeners ...net.Listener) error {
 	}
 	s.workingDirectory = wd
 
-	childPid, err := s.startProcess()
+	childPID, err := s.startProcess()
 	if err != nil {
 		return fmt.Errorf("error in RunMaster after starting worker; %v", err)
 	}
 
-	sigC := make(chan os.Signal, 1)
+	signals := make(chan os.Signal, 1)
 	// NOTE: The signals SIGKILL and SIGSTOP may not be caught by a program.
 	// https://golang.org/pkg/os/signal/#hdr-Types_of_signals
-	signal.Notify(sigC, syscall.SIGHUP, syscall.SIGTERM)
+	signal.Notify(signals, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	for {
-		sig := <-sigC
+		sig := <-signals
 		switch sig {
 		case syscall.SIGHUP:
 			newChildPid, err := s.startProcess()
@@ -80,22 +80,22 @@ func (s *Starter) RunMaster(listeners ...net.Listener) error {
 				return fmt.Errorf("error in RunMaster after starting new worker; %v", err)
 			}
 
-			err = syscall.Kill(childPid, syscall.SIGTERM)
+			err = syscall.Kill(childPID, syscall.SIGTERM)
 			if err != nil {
-				return fmt.Errorf("error in RunMaster after sending SIGTERM to worker pid=%d after receiving SIGHUP; %v", childPid, err)
+				return fmt.Errorf("error in RunMaster after sending SIGTERM to worker pid=%d after receiving SIGHUP; %v", childPID, err)
 			}
 
-			_, err = syscall.Wait4(childPid, nil, 0, nil)
+			_, err = syscall.Wait4(childPID, nil, 0, nil)
 			if err != nil {
-				return fmt.Errorf("error in RunMaster after waiting worker pid=%d; %v", childPid, err)
+				return fmt.Errorf("error in RunMaster after waiting worker pid=%d; %v", childPID, err)
 			}
 
-			childPid = newChildPid
+			childPID = newChildPid
 
-		case syscall.SIGTERM:
-			err := syscall.Kill(childPid, syscall.SIGTERM)
+		case syscall.SIGINT, syscall.SIGTERM:
+			err := syscall.Kill(childPID, syscall.SIGTERM)
 			if err != nil {
-				return fmt.Errorf("error in RunMaster after sending SIGTERM to worker pid=%d after receiving SIGTERM; %v", childPid, err)
+				return fmt.Errorf("error in RunMaster after sending SIGTERM to worker pid=%d after receiving %v; %v", childPID, sig, err)
 			}
 			return nil
 		}
@@ -160,17 +160,17 @@ func (s *Starter) IsMaster() bool {
 // Listeners returns the listeners passed from the master if this is called by the worker process.
 // It returns nil when this is called by the master process.
 func (s *Starter) Listeners() ([]net.Listener, error) {
-	lnCountStr, isWorker := os.LookupEnv(s.envListenFDs)
+	countStr, isWorker := os.LookupEnv(s.envListenFDs)
 	if !isWorker {
 		return nil, nil
 	}
 
-	lnCount, err := strconv.Atoi(lnCountStr)
+	count, err := strconv.Atoi(countStr)
 	if err != nil {
 		return nil, fmt.Errorf("error in Listeners after getting invalid listener count; %v", err)
 	}
-	listeners := make([]net.Listener, lnCount)
-	for i := 0; i < lnCount; i++ {
+	listeners := make([]net.Listener, count)
+	for i := 0; i < count; i++ {
 		fd := uintptr(i + stdFdCount)
 		file := os.NewFile(fd, "listener")
 		l, err := net.FileListener(file)
