@@ -39,7 +39,7 @@ type LoadBalancer struct {
 
 // Config is the configuration object for the load balancer.
 type Config struct {
-	PidFile        string          `yaml:"pid_file"`
+	PIDFile        string          `yaml:"pid_file"`
 	ErrorLog       string          `yaml:"error_log"`
 	EnableDebugLog bool            `yaml:"enable_debug_log"`
 	API            APIConfig       `yaml:"api"`

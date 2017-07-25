@@ -167,7 +167,7 @@ func (a *cliApp) infoCommand(args []string) {
 				var buf []byte
 				buf = append(append(buf, s.URL...), '\n')
 				buf = append(buf, "Prot LocalAddress:Port Scheduler Flags\n"...)
-				buf = append(buf, "  -> RemoteAddress:Port           Forward CfgWeight CurWeight ActiveConn InActConn Detached Locked\n"...)
+				buf = append(buf, "  -> RemoteAddress:Port           Forward CfgWeight CurWeight Detached Locked ActiveConn InActConn\n"...)
 				for _, sr := range info.Services {
 					buf = append(buf, fmt.Sprintf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)...)
 					for _, d := range sr.Destinations {
