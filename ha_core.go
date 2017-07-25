@@ -226,7 +226,9 @@ func (n *haNode) doMasterTasks(ctx context.Context) haState {
 		}
 
 	case <-ctx.Done():
-		ltsvlog.Logger.Info().String("msg", "got ctx.Done(), returning haShutdown from doMasterTasks").Log()
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "got ctx.Done(), returning haShutdown from doMasterTasks").Log()
+		}
 		return haShutdown
 
 	case err := <-n.errChannel:
@@ -248,7 +250,9 @@ func (n *haNode) doBackupTasks(ctx context.Context) haState {
 		return n.backupHandleAdvertisement(advert)
 
 	case <-ctx.Done():
-		ltsvlog.Logger.Info().String("msg", "got ctx.Done(), returning haShutdown from doBackupTasks").Log()
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "got ctx.Done(), returning haShutdown from doBackupTasks").Log()
+		}
 		return haShutdown
 
 	case err := <-n.errChannel:
@@ -258,13 +262,19 @@ func (n *haNode) doBackupTasks(ctx context.Context) haState {
 		return haError
 
 	case <-timeout:
-		ltsvlog.Logger.Info().String("msg", "doBackupTasks: timed out waiting for Advertisement").Stringer("remaining", remaining).Log()
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "doBackupTasks: timed out waiting for Advertisement").Stringer("remaining", remaining).Log()
+		}
 		select {
 		case advert := <-n.recvChannel:
-			ltsvlog.Logger.Info().String("msg", "doBackupTasks: found Advertisement queued for processing")
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "doBackupTasks: found Advertisement queued for processing")
+			}
 			return n.backupHandleAdvertisement(advert)
 		default:
-			ltsvlog.Logger.Info().String("msg", "doBackupTasks: becoming MASTER")
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "doBackupTasks: becoming MASTER").Log()
+			}
 			return haMaster
 		}
 	}

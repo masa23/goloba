@@ -351,10 +351,14 @@ func (l *LoadBalancer) Run(ctx context.Context, listeners []net.Listener) error 
 	}
 	<-ctx.Done()
 	if l.config.API.ListenAddress != "" {
-		ltsvlog.Logger.Info().String("msg", "waiting API server to shutdown").Log()
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "waiting API server to shutdown").Log()
+		}
 		<-l.apiServer.done
 	}
-	ltsvlog.Logger.Info().String("msg", "exiting Run").Log()
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "exiting Run").Log()
+	}
 	return nil
 }
 
@@ -423,25 +427,30 @@ func (l *LoadBalancer) doAddOrUpdateIPVS(ctx context.Context, config *Config, se
 				Port:          serviceConf.Port,
 				SchedName:     serviceConf.Schedule,
 			}
-			if err := l.ipvs.NewService(service); err != nil {
+			err := l.ipvs.NewService(service)
+			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("faild create ipvs service, err=%s", err)
-				}).Stringer("address", serviceConfIP).
-					Uint16("port", serviceConf.Port).
+					return fmt.Errorf("failed to create ipvs service, err=%s", err)
+				}).Stringer("srcIP", serviceConfIP).Uint16("srcPort", serviceConf.Port).
 					String("schedule", serviceConf.Schedule).Stack("")
 			}
+			ltsvlog.Logger.Info().String("msg", "added ipvs service").
+				Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+				String("schedule", serviceConf.Schedule).Log()
 		} else {
 			service = serviceAndDests.service
 			if serviceConf.Schedule != service.SchedName {
 				service.SchedName = serviceConf.Schedule
-				if err := l.ipvs.UpdateService(service); err != nil {
+				err := l.ipvs.UpdateService(service)
+				if err != nil {
 					return ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("faild update ipvs service, err=%s", err)
-					}).Stringer("address", serviceConfIP).
-						Uint16("port", serviceConf.Port).
+						return fmt.Errorf("failed to update ipvs service, err=%s", err)
+					}).Stringer("srcIP", serviceConfIP).Uint16("srcPort", serviceConf.Port).
 						String("schedule", serviceConf.Schedule).Stack("")
 				}
-
+				ltsvlog.Logger.Info().String("msg", "updated ipvs service").
+					Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+					String("schedule", serviceConf.Schedule).Log()
 			}
 		}
 
@@ -485,12 +494,15 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 		err := l.ipvs.NewDestination(service, destination)
 		if err != nil {
 			return ltsvlog.WrapErr(err, func(err error) error {
-				return fmt.Errorf("faild create ipvs destination, err=%s", err)
-			}).Stringer("address", destConfIP).
-				Uint16("port", destConf.Port).
-				String("fwdMethod", serviceConf.Type).
-				Uint16("weight", destConf.Weight).Stack("")
+				return fmt.Errorf("failed to create ipvs destination, err=%s", err)
+			}).Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+				Stringer("destIP", destConfIP).Uint16("destPort", destConf.Port).
+				String("fwdMethod", serviceConf.Type).Uint16("weight", destConf.Weight).Stack("")
 		}
+		ltsvlog.Logger.Info().String("msg", "added ipvs destination").
+			Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+			Stringer("destIP", destConfIP).Uint16("destPort", destConf.Port).
+			String("fwdMethod", serviceConf.Type).Uint16("weight", destConf.Weight).Log()
 	} else {
 		destination := dest.destination
 		if fwd != destination.FwdMethod || uint32(destConf.Weight) != destination.Weight {
@@ -499,12 +511,15 @@ func (l *LoadBalancer) addOrUpdateDestination(ctx context.Context, service *libi
 			err := l.ipvs.UpdateDestination(service, destination)
 			if err != nil {
 				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("faild update ipvs destination, err=%s", err)
-				}).Stringer("address", destConfIP).
-					Uint16("port", destConf.Port).
-					String("fwdMethod", serviceConf.Type).
-					Uint16("weight", destConf.Weight).Stack("")
+					return fmt.Errorf("failed to update ipvs destination, err=%s", err)
+				}).Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+					Stringer("destIP", destConfIP).Uint16("destPort", destConf.Port).
+					String("fwdMethod", serviceConf.Type).Uint16("weight", destConf.Weight).Stack("")
 			}
+			ltsvlog.Logger.Info().String("msg", "updated ipvs destination").
+				Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+				Stringer("destIP", destConfIP).Uint16("destPort", destConf.Port).
+				String("fwdMethod", serviceConf.Type).Uint16("weight", destConf.Weight).Log()
 		}
 	}
 	return nil
@@ -531,7 +546,8 @@ func (l *LoadBalancer) doDeleteIPVS(ctx context.Context, config *Config, service
 					return fmt.Errorf("faild delete ipvs service, err=%s", err)
 				}).Stringer("serviceAddress", service.Address).Stack("")
 			}
-			ltsvlog.Logger.Info().String("msg", "deleted ipvs service").Stringer("serviceAddress", service.Address).Log()
+			ltsvlog.Logger.Info().String("msg", "deleted ipvs service").
+				Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).Log()
 		} else {
 			for _, dest := range serviceAndDests.destinations {
 				destination := dest.destination
@@ -543,6 +559,9 @@ func (l *LoadBalancer) doDeleteIPVS(ctx context.Context, config *Config, service
 							return fmt.Errorf("faild delete ipvs destination, err=%v", err)
 						}).Stack("")
 					}
+					ltsvlog.Logger.Info().String("msg", "deleted ipvs destination").
+						Stringer("srcIP", service.Address).Uint16("srcPort", service.Port).
+						Stringer("destIP", destination.Address).Uint16("destPort", destination.Port).Log()
 				}
 			}
 		}
@@ -599,11 +618,13 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 	if result.OK && result.Err == nil {
 		if destination.Weight != uint32(destConf.Weight) {
 			if destConf.Locked {
-				ltsvlog.Logger.Info().String("msg", "skip attaching locked destination").
-					Stringer("srvIP", service.Address).
-					Uint16("srvPort", service.Port).
-					Stringer("destIP", destination.Address).
-					Uint16("destPort", destination.Port).Log()
+				if ltsvlog.Logger.DebugEnabled() {
+					ltsvlog.Logger.Debug().String("msg", "skip attaching locked destination").
+						Stringer("srvIP", service.Address).
+						Uint16("srvPort", service.Port).
+						Stringer("destIP", destination.Address).
+						Uint16("destPort", destination.Port).Log()
+				}
 				return nil
 			}
 
@@ -630,11 +651,13 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 	} else {
 		if destination.Weight != 0 {
 			if destConf.Locked {
-				ltsvlog.Logger.Info().String("msg", "skip detaching locked destination").
-					Stringer("srvIP", service.Address).
-					Uint16("srvPort", service.Port).
-					Stringer("destIP", destination.Address).
-					Uint16("destPort", destination.Port).Log()
+				if ltsvlog.Logger.DebugEnabled() {
+					ltsvlog.Logger.Debug().String("msg", "skip detaching locked destination").
+						Stringer("srvIP", service.Address).
+						Uint16("srvPort", service.Port).
+						Stringer("destIP", destination.Address).
+						Uint16("destPort", destination.Port).Log()
+				}
 				return nil
 			}
 
@@ -698,7 +721,7 @@ func (l *LoadBalancer) changeWeight(ctx context.Context, srvIP net.IP, srvPort u
 	}
 	destConf.Weight = weight
 	destConf.Locked = lock
-	ltsvlog.Logger.Info().String("msg", "change destination weight").
+	ltsvlog.Logger.Info().String("msg", "changed destination weight").
 		Stringer("srvIP", srvIP).Uint16("srvPort", srvPort).
 		Stringer("destIP", destIP).Uint16("destPort", destPort).
 		Uint16("weight", weight).Bool("lock", lock).Log()

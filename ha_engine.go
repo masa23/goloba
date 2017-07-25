@@ -34,7 +34,9 @@ type haEngine struct {
 func (e *haEngine) HAState(state haState) error {
 	c := e.config
 	for i, vipCfg := range c.vips {
-		ltsvlog.Logger.Info().String("msg", "before updateHAStateForVIP").Int("i", i).Fmt("vipCfg", "%+v", vipCfg).Log()
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "before updateHAStateForVIP").Int("i", i).Fmt("vipCfg", "%+v", vipCfg).Log()
+		}
 		err := e.updateHAStateForVIP(state, vipCfg)
 		if err != nil {
 			// 1つのVIPの追加・削除に失敗しても他のVIPの追加・削除は行いたいので
@@ -56,9 +58,11 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 
 	if state == haMaster {
 		if hasVIP {
-			ltsvlog.Logger.Info().String("msg", "HAState called but already acquired VIP").Fmt("state", "%v", state).
-				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
-				Stringer("mask", vipCfg.ipNet.Mask).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "HAState called but already acquired VIP").Fmt("state", "%v", state).
+					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
+					Stringer("mask", vipCfg.ipNet.Mask).Log()
+			}
 		} else {
 			err := netutil.AddAddr(c.vipInterface, vipCfg.ip, vipCfg.ipNet, "")
 			if err != nil {
@@ -67,12 +71,16 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 				}).String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
 					Stringer("mask", vipCfg.ipNet.Mask).Stack("")
 			}
+			ltsvlog.Logger.Info().String("msg", "Added VIP").
+				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Log()
 		}
 
 		if vipCfg.cancel == nil {
 			var ctx context.Context
 			ctx, vipCfg.cancel = context.WithCancel(context.TODO())
-			ltsvlog.Logger.Info().String("msg", "before go sendGARPLoop").Stringer("vip", vipCfg.ip).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "before go sendGARPLoop").Stringer("vip", vipCfg.ip).Log()
+			}
 			go e.sendGARPLoop(ctx, c.vipInterface, vipCfg.ip)
 		}
 	} else {
@@ -84,19 +92,25 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 				}).String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
 					Stringer("mask", vipCfg.ipNet.Mask).Stack("")
 			}
+			ltsvlog.Logger.Info().String("msg", "Deleted VIP").
+				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Log()
 		} else {
-			ltsvlog.Logger.Info().String("msg", "HAState called but already released VIP").Fmt("state", "%v", state).
-				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
-				Stringer("mask", vipCfg.ipNet.Mask).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "HAState called but already released VIP").Fmt("state", "%v", state).
+					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
+					Stringer("mask", vipCfg.ipNet.Mask).Log()
+			}
 			return nil
 		}
 		if vipCfg.cancel != nil {
 			vipCfg.cancel()
 		}
 	}
-	ltsvlog.Logger.Info().String("msg", "HAState updated").Fmt("state", "%v", state).
-		String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
-		Stringer("mask", vipCfg.ipNet.Mask).Log()
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "HAState updated").Fmt("state", "%v", state).
+			String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
+			Stringer("mask", vipCfg.ipNet.Mask).Log()
+	}
 	return nil
 }
 
@@ -112,9 +126,13 @@ func (e *haEngine) sendGARPLoop(ctx context.Context, intf *net.Interface, vip ne
 					return fmt.Errorf("failed to send GARP, err=%v", err)
 				}).Stringer("vip", vip).Stack(""))
 			}
-			ltsvlog.Logger.Info().String("msg", "sent GARP").Stringer("vip", vip).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "sent GARP").Stringer("vip", vip).Log()
+			}
 		case <-ctx.Done():
-			ltsvlog.Logger.Info().String("msg", "exiting sendGARPLoop").Stringer("vip", vip).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "exiting sendGARPLoop").Stringer("vip", vip).Log()
+			}
 			return
 		}
 	}

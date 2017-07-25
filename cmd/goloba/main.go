@@ -82,10 +82,12 @@ func main() {
 	signals := make(chan os.Signal)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
-	ltsvlog.Logger.Info().String("msg", "Received SIGTERM, initiating shutdown...").Log()
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "worker received SIGTERM, initiating shutdown...").Int("pid", pid).Log()
+	}
 	cancel()
 	<-done
-	ltsvlog.Logger.Info().String("msg", "exiting main").Log()
+	ltsvlog.Logger.Info().String("msg", "goloba worker stopped").Int("pid", pid).Log()
 }
 
 func runMaster(starter *serverstarter.Starter, conf *goloba.Config, pid int) error {
@@ -93,7 +95,10 @@ func runMaster(starter *serverstarter.Starter, conf *goloba.Config, pid int) err
 	if err != nil {
 		return err
 	}
-	defer os.Remove(conf.PIDFile)
+	defer func() {
+		os.Remove(conf.PIDFile)
+		ltsvlog.Logger.Info().String("msg", "goloba master stopped").Int("pid", pid).Log()
+	}()
 
 	ltsvlog.Logger.Info().String("msg", "goloba master started!").Int("pid", pid).Log()
 
