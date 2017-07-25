@@ -2,6 +2,7 @@ package goloba
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -302,7 +303,7 @@ func (n *haNode) queueAdvertisement(advert *advertisement) {
 	select {
 	case n.recvChannel <- advert:
 	default:
-		n.errChannel <- ltsvlog.Err(fmt.Errorf("queueAdvertisement: recvChannel is full")).Stack("")
+		n.errChannel <- ltsvlog.Err(errors.New("queueAdvertisement: recvChannel is full")).Stack("")
 	}
 }
 
@@ -359,7 +360,9 @@ func (n *haNode) receiveAdvertisements() {
 			}
 		} else if advert != nil {
 			receiveCount := atomic.AddUint64(&n.receiveCount, 1)
-			ltsvlog.Logger.Info().String("msg", "receiveAdvertisements: Received advertisements").Uint64("receveCount", receiveCount).Log()
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "receiveAdvertisements: Received advertisements").Uint64("receveCount", receiveCount).Log()
+			}
 			n.queueAdvertisement(advert)
 		}
 	}
