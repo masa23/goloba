@@ -157,13 +157,13 @@ func (a *cliApp) infoCommand(args []string) {
 				// goloba output:
 				// [root@lbvm01 ~]# curl localhost:8880/info
 				// Prot LocalAddress:Port Scheduler Flags
-				//   -> RemoteAddress:Port           Forward CfgWeight CurWeight ActiveConn InActConn Detached Locked
+				//   -> RemoteAddress:Port           Forward CfgWeight CurWeight Detached Locked ActiveConn InActConn
 				// tcp  192.168.122.2:80 wrr
-				//   -> 192.168.122.62:80            droute  100       100       0          0         true     false
-				//   -> 192.168.122.240:80           droute  500       500       0          0         false    false
+				//   -> 192.168.122.62:80            droute  100       100       true     false  0          0
+				//   -> 192.168.122.240:80           droute  500       500       false    false  0          0
 				// tcp  192.168.122.2:443 wrr
-				//   -> 192.168.122.62:443           masq    10        0         0          0         true     false
-				//   -> 192.168.122.240:443          masq    20        20        0          0         false    false
+				//   -> 192.168.122.62:443           masq    10        0         true     false  0          0
+				//   -> 192.168.122.240:443          masq    20        20        false    false  0          0
 				var buf []byte
 				buf = append(append(buf, s.URL...), '\n')
 				buf = append(buf, "Prot LocalAddress:Port Scheduler Flags\n"...)
@@ -172,7 +172,7 @@ func (a *cliApp) infoCommand(args []string) {
 					buf = append(buf, fmt.Sprintf("%-4s %s:%d %s\n", sr.Protocol, sr.Address, sr.Port, sr.Schedule)...)
 					for _, d := range sr.Destinations {
 						hostPort := net.JoinHostPort(d.Address, strconv.Itoa(int(d.Port)))
-						buf = append(buf, fmt.Sprintf("  -> %-28s %-7s %-9d %-9d %-10d %-9d %-8v %v\n", hostPort, d.Forward, d.ConfigWeight, d.CurrentWeight, d.ActiveConn, d.InactiveConn, d.Detached, d.Locked)...)
+						buf = append(buf, fmt.Sprintf("  -> %-28s %-7s %-9d %-9d %-8v %-6v %-10d %-9d\n", hostPort, d.Forward, d.ConfigWeight, d.CurrentWeight, d.Detached, d.Locked, d.ActiveConn, d.InactiveConn)...)
 					}
 				}
 				os.Stdout.Write(buf)
