@@ -619,6 +619,7 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 					Uint16("cfgWeight", destConf.Weight).
 					Stack("")
 			}
+			destConf.Detached = false
 			ltsvlog.Logger.Info().String("msg", "attached destination").
 				Stringer("srvIP", service.Address).
 				Uint16("srvPort", service.Port).
@@ -649,6 +650,7 @@ func (l *LoadBalancer) attachOrDetachDestinationByHealthCheck(ctx context.Contex
 					Uint16("cfgWeight", destConf.Weight).
 					Stack("")
 			}
+			destConf.Detached = true
 			ltsvlog.Logger.Info().String("msg", "detached destination").
 				Stringer("srvIP", service.Address).
 				Uint16("srvPort", service.Port).
@@ -694,6 +696,7 @@ func (l *LoadBalancer) changeWeight(ctx context.Context, srvIP net.IP, srvPort u
 			Stringer("destIP", destIP).Uint16("destPort", destPort).
 			Uint16("weight", weight).Stack("")
 	}
+	destConf.Weight = weight
 	destConf.Locked = lock
 	ltsvlog.Logger.Info().String("msg", "change destination weight").
 		Stringer("srvIP", srvIP).Uint16("srvPort", srvPort).
