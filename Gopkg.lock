@@ -23,7 +23,7 @@
   branch = "master"
   name = "github.com/hnakamur/serverstarter"
   packages = ["."]
-  revision = "1f18c383678ccfd1187f56fa6caf879f4a1cbd39"
+  revision = "4e77f3f8ac2cbb06e5051f5094d3308d8a93683c"
 
 [[projects]]
   branch = "master"
