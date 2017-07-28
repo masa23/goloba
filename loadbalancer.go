@@ -405,9 +405,9 @@ func (l *LoadBalancer) loadIPVS() error {
 			return fmt.Errorf("failed to load ipvs services and destinations, err=%v", err)
 		})
 	}
-	//if ltsvlog.Logger.DebugEnabled() {
-	//	ltsvlog.Logger.Debug().String("msg", "lvs.New").Fmt("servicesAndDests", "%+v", servicesAndDests).Log()
-	//}
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "lvs.New").Fmt("servicesAndDests", "%+v", servicesAndDests).Log()
+	}
 	l.servicesAndDests = servicesAndDests
 	return nil
 }
