@@ -80,7 +80,7 @@ func (s *Starter) RunMaster(listeners ...net.Listener) error {
 				return fmt.Errorf("error in RunMaster after starting new worker; %v", err)
 			}
 
-			err = syscall.Kill(childPID, syscall.SIGTERM)
+			err = syscall.Kill(childPID, syscall.SIGUSR1)
 			if err != nil {
 				return fmt.Errorf("error in RunMaster after sending SIGTERM to worker pid=%d after receiving SIGHUP; %v", childPID, err)
 			}

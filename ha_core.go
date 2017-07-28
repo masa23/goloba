@@ -50,17 +50,18 @@ type haNodeConfig struct {
 // haNode represents one member of a high availability cluster.
 type haNode struct {
 	haNodeConfig
-	conn                 *ipHAConn
-	engine               *haEngine
-	statusLock           sync.RWMutex
-	haStatus             haStatus
-	sendCount            uint64
-	receiveCount         uint64
-	masterDownInterval   time.Duration
-	lastMasterAdvertTime time.Time
-	errChannel           chan error
-	recvChannel          chan *advertisement
-	stopSenderChannel    chan haState
+	conn                  *ipHAConn
+	engine                *haEngine
+	statusLock            sync.RWMutex
+	haStatus              haStatus
+	sendCount             uint64
+	receiveCount          uint64
+	masterDownInterval    time.Duration
+	lastMasterAdvertTime  time.Time
+	errChannel            chan error
+	recvChannel           chan *advertisement
+	stopSenderChannel     chan haState
+	keepVIPsDuringRestart bool
 }
 
 // newHANode creates a new Node with the given NodeConfig and haConn.
@@ -344,12 +345,16 @@ func (n *haNode) sendAdvertisements() {
 		case newState := <-n.stopSenderChannel:
 			ticker.Stop()
 			if newState == haShutdown {
-				advert := n.newAdvertisement()
-				advert.Priority = 0
-				if err := n.conn.send(advert, time.Second); err != nil {
-					ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("sendAdvertisements: Failed to send shutdown Advertisement, %v", err)
-					}).Stack(""))
+				if n.keepVIPsDuringRestart {
+					ltsvlog.Logger.Info().String("msg", "don't send shutdown advertisement since we are doing graceful restart").Log()
+				} else {
+					advert := n.newAdvertisement()
+					advert.Priority = 0
+					if err := n.conn.send(advert, time.Second); err != nil {
+						ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+							return fmt.Errorf("sendAdvertisements: Failed to send shutdown Advertisement, %v", err)
+						}).Stack(""))
+					}
 				}
 			}
 			return
@@ -376,4 +381,9 @@ func (n *haNode) receiveAdvertisements() {
 			n.queueAdvertisement(advert)
 		}
 	}
+}
+
+func (n *haNode) SetKeepVIPsDuringRestart(keep bool) {
+	n.keepVIPsDuringRestart = keep
+	n.engine.SetKeepVIPsDuringRestart(keep)
 }

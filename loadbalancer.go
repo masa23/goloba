@@ -756,6 +756,10 @@ func (l *LoadBalancer) doUpdateCheckers(ctx context.Context, config *Config) {
 	}
 }
 
+func (l *LoadBalancer) SetKeepVIPsDuringRestart(keep bool) {
+	l.vrrpNode.SetKeepVIPsDuringRestart(keep)
+}
+
 type ipvsServiceAndDestsByIPAndPort []*ipvsServiceAndDests
 
 func (a ipvsServiceAndDestsByIPAndPort) Len() int      { return len(a) }

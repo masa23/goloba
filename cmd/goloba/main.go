@@ -80,12 +80,17 @@ func main() {
 	}()
 
 	signals := make(chan os.Signal)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-	<-signals
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "worker received SIGTERM, initiating shutdown...").Int("pid", pid).Log()
+	signal.Notify(signals, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-signals
+	switch sig {
+	case syscall.SIGUSR1:
+		ltsvlog.Logger.Info().String("msg", "worker received SIGUSR1, initiating shutdown...").Int("pid", pid).Log()
+		lb.SetKeepVIPsDuringRestart(true)
+		cancel()
+	case syscall.SIGINT, syscall.SIGTERM:
+		ltsvlog.Logger.Info().String("msg", "worker received SIGINT or SIGTERM, initiating shutdown...").Stringer("signal", sig).Int("pid", pid).Log()
+		cancel()
 	}
-	cancel()
 	<-done
 	ltsvlog.Logger.Info().String("msg", "goloba worker stopped").Int("pid", pid).Log()
 }
