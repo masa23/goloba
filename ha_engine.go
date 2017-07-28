@@ -32,6 +32,17 @@ type haEngine struct {
 	keepVIPsDuringRestart bool
 }
 
+func (e *haEngine) InitialHAState() (haState, error) {
+	hasVIP, err := e.hasAnyVIP()
+	if err != nil {
+		return haError, err
+	}
+	if hasVIP {
+		return haMaster, nil
+	}
+	return haBackup, nil
+}
+
 func (e *haEngine) HAState(state haState) error {
 	c := e.config
 	for i, vipCfg := range c.vips {
@@ -146,4 +157,23 @@ func (e *haEngine) sendGARPLoop(ctx context.Context, intf *net.Interface, vip ne
 
 func (e *haEngine) SetKeepVIPsDuringRestart(keep bool) {
 	e.keepVIPsDuringRestart = keep
+}
+
+func (e *haEngine) hasAnyVIP() (bool, error) {
+	c := e.config
+	for _, vipCfg := range c.vips {
+		hasVIP, err := netutil.HasAddr(c.vipInterface, vipCfg.ip)
+		if err != nil {
+			return false, ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to check wether we have VIP; %v", err)
+			}).String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Stack("")
+		}
+		if hasVIP {
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "I have VIP").Stringer("vip", vipCfg.ip).Log()
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }

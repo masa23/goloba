@@ -17,6 +17,24 @@ const (
 	haShutdown
 )
 
+func (s haState) String() string {
+	switch s {
+	case haUnkown:
+		return "unknown"
+	case haBackup:
+		return "backup"
+	case haDisabled:
+		return "disabled"
+	case haError:
+		return "error"
+	case haMaster:
+		return "master"
+	case haShutdown:
+		return "shutdown"
+	}
+	return ""
+}
+
 // haStatus indicates the High-Availability status for a VRRP Node.
 type haStatus struct {
 	LastUpdate     time.Time

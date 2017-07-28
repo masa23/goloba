@@ -124,6 +124,15 @@ func (n *haNode) newAdvertisement() *advertisement {
 // advertisements, and periodically notifies the engine of the current state. run does not return
 // until Shutdown is called or an unrecoverable error occurs.
 func (n *haNode) run(ctx context.Context) error {
+	haState, err := n.engine.InitialHAState()
+	if err != nil {
+		return err
+	}
+	if haState == haMaster {
+		ltsvlog.Logger.Info().String("msg", "becoming master since we have VIP after graceful restart").Log()
+		n.becomeMaster()
+	}
+
 	go n.receiveAdvertisements()
 
 	for n.state() != haShutdown {
