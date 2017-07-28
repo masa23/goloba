@@ -100,9 +100,9 @@ func (c *healthchecker) run(ctx context.Context, resultC chan<- healthcheckResul
 }
 
 func (c *healthchecker) check() (bool, error) {
-	if ltsvlog.Logger.DebugEnabled() {
-		ltsvlog.Logger.Debug().String("msg", "Checker.check").Fmt("config", "%+v", c.config).Log()
-	}
+	//if ltsvlog.Logger.DebugEnabled() {
+	//	ltsvlog.Logger.Debug().String("msg", "Checker.check").Fmt("config", "%+v", c.config).Log()
+	//}
 	req, err := http.NewRequest(c.config.Method, c.config.URL, nil)
 	if err != nil {
 		return false, ltsvlog.WrapErr(err, func(err error) error {

@@ -132,9 +132,9 @@ func (e *haEngine) sendGARPLoop(ctx context.Context, intf *net.Interface, vip ne
 					return fmt.Errorf("failed to send GARP, err=%v", err)
 				}).Stringer("vip", vip).Stack(""))
 			}
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "sent GARP").Stringer("vip", vip).Log()
-			}
+			//if ltsvlog.Logger.DebugEnabled() {
+			//	ltsvlog.Logger.Debug().String("msg", "sent GARP").Stringer("vip", vip).Log()
+			//}
 		case <-ctx.Done():
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "exiting sendGARPLoop").Stringer("vip", vip).Log()
