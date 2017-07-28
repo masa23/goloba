@@ -128,7 +128,7 @@ func LoadConfig(file string) (*Config, error) {
 		}).String("configFile", file).Stack("")
 	}
 	var c Config
-	err = yaml.Unmarshal(buf, &c)
+	err = yaml.UnmarshalStrict(buf, &c)
 	if err != nil {
 		return nil, ltsvlog.WrapErr(err, func(err error) error {
 			return fmt.Errorf("failed to parse config file, err=%v", err)
