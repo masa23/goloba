@@ -50,17 +50,18 @@ type haNodeConfig struct {
 // haNode represents one member of a high availability cluster.
 type haNode struct {
 	haNodeConfig
-	conn                 *ipHAConn
-	engine               *haEngine
-	statusLock           sync.RWMutex
-	haStatus             haStatus
-	sendCount            uint64
-	receiveCount         uint64
-	masterDownInterval   time.Duration
-	lastMasterAdvertTime time.Time
-	errChannel           chan error
-	recvChannel          chan *advertisement
-	stopSenderChannel    chan haState
+	conn                  *ipHAConn
+	engine                *haEngine
+	statusLock            sync.RWMutex
+	haStatus              haStatus
+	sendCount             uint64
+	receiveCount          uint64
+	masterDownInterval    time.Duration
+	lastMasterAdvertTime  time.Time
+	errChannel            chan error
+	recvChannel           chan *advertisement
+	stopSenderChannel     chan haState
+	keepVIPsDuringRestart bool
 }
 
 // newHANode creates a new Node with the given NodeConfig and haConn.
@@ -123,6 +124,15 @@ func (n *haNode) newAdvertisement() *advertisement {
 // advertisements, and periodically notifies the engine of the current state. run does not return
 // until Shutdown is called or an unrecoverable error occurs.
 func (n *haNode) run(ctx context.Context) error {
+	haState, err := n.engine.InitialHAState()
+	if err != nil {
+		return err
+	}
+	if haState == haMaster {
+		ltsvlog.Logger.Info().String("msg", "becoming master since we have VIP after graceful restart").Log()
+		n.becomeMaster()
+	}
+
 	go n.receiveAdvertisements()
 
 	for n.state() != haShutdown {
@@ -324,36 +334,44 @@ func (n *haNode) sendAdvertisements() {
 		// safe.
 		select {
 		case <-ticker.C:
-			if err := n.conn.send(n.newAdvertisement(), n.MasterAdvertInterval); err != nil {
-				select {
-				case n.errChannel <- err:
-				default:
-					ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("sendAdvertisements: Unable to write to errChannel. Error was: %v", err)
-					}).Stack(""))
-					os.Exit(1)
-				}
-				break
-			}
-
-			sendCount := atomic.AddUint64(&n.sendCount, 1)
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "sendAdvertisements: Sent advertisements").Uint64("sendCount", sendCount).Log()
-			}
+			n.doSendMasterAdvertisement()
 
 		case newState := <-n.stopSenderChannel:
 			ticker.Stop()
 			if newState == haShutdown {
-				advert := n.newAdvertisement()
-				advert.Priority = 0
-				if err := n.conn.send(advert, time.Second); err != nil {
-					ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("sendAdvertisements: Failed to send shutdown Advertisement, %v", err)
-					}).Stack(""))
+				if n.keepVIPsDuringRestart {
+					n.doSendMasterAdvertisement()
+					ltsvlog.Logger.Info().String("msg", "sent last master advertisement before graceful restart").Log()
+				} else {
+					advert := n.newAdvertisement()
+					advert.Priority = 0
+					if err := n.conn.send(advert, time.Second); err != nil {
+						ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+							return fmt.Errorf("sendAdvertisements: Failed to send shutdown Advertisement, %v", err)
+						}).Stack(""))
+					}
 				}
 			}
 			return
 		}
+	}
+}
+
+func (n *haNode) doSendMasterAdvertisement() {
+	if err := n.conn.send(n.newAdvertisement(), n.MasterAdvertInterval); err != nil {
+		select {
+		case n.errChannel <- err:
+		default:
+			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("sendAdvertisements: Unable to write to errChannel. Error was: %v", err)
+			}).Stack(""))
+			os.Exit(1)
+		}
+	}
+
+	sendCount := atomic.AddUint64(&n.sendCount, 1)
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "sendAdvertisements: Sent advertisements").Uint64("sendCount", sendCount).Log()
 	}
 }
 
@@ -376,4 +394,9 @@ func (n *haNode) receiveAdvertisements() {
 			n.queueAdvertisement(advert)
 		}
 	}
+}
+
+func (n *haNode) SetKeepVIPsDuringRestart(keep bool) {
+	n.keepVIPsDuringRestart = keep
+	n.engine.SetKeepVIPsDuringRestart(keep)
 }

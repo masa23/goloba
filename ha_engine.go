@@ -28,7 +28,19 @@ type haEngineVIPConfig struct {
 
 // haEngine implements the Engine interface for testing purposes.
 type haEngine struct {
-	config *haEngineConfig
+	config                *haEngineConfig
+	keepVIPsDuringRestart bool
+}
+
+func (e *haEngine) InitialHAState() (haState, error) {
+	hasVIP, err := e.hasAnyVIP()
+	if err != nil {
+		return haError, err
+	}
+	if hasVIP {
+		return haMaster, nil
+	}
+	return haBackup, nil
 }
 
 func (e *haEngine) HAState(state haState) error {
@@ -85,15 +97,20 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 		}
 	} else {
 		if hasVIP {
-			err := netutil.DelAddr(c.vipInterface, vipCfg.ip, vipCfg.ipNet)
-			if err != nil {
-				return ltsvlog.WrapErr(err, func(err error) error {
-					return fmt.Errorf("failed to delete IP address, err=%v", err)
-				}).String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
-					Stringer("mask", vipCfg.ipNet.Mask).Stack("")
+			if state == haShutdown && e.keepVIPsDuringRestart {
+				ltsvlog.Logger.Info().String("msg", "Skip deleting VIP since we are doing graceful restart").
+					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Log()
+			} else {
+				err := netutil.DelAddr(c.vipInterface, vipCfg.ip, vipCfg.ipNet)
+				if err != nil {
+					return ltsvlog.WrapErr(err, func(err error) error {
+						return fmt.Errorf("failed to delete IP address, err=%v", err)
+					}).String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
+						Stringer("mask", vipCfg.ipNet.Mask).Stack("")
+				}
+				ltsvlog.Logger.Info().String("msg", "Deleted VIP").
+					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Log()
 			}
-			ltsvlog.Logger.Info().String("msg", "Deleted VIP").
-				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Log()
 		} else {
 			if ltsvlog.Logger.DebugEnabled() {
 				ltsvlog.Logger.Debug().String("msg", "HAState called but already released VIP").Fmt("state", "%v", state).
@@ -136,4 +153,27 @@ func (e *haEngine) sendGARPLoop(ctx context.Context, intf *net.Interface, vip ne
 			return
 		}
 	}
+}
+
+func (e *haEngine) SetKeepVIPsDuringRestart(keep bool) {
+	e.keepVIPsDuringRestart = keep
+}
+
+func (e *haEngine) hasAnyVIP() (bool, error) {
+	c := e.config
+	for _, vipCfg := range c.vips {
+		hasVIP, err := netutil.HasAddr(c.vipInterface, vipCfg.ip)
+		if err != nil {
+			return false, ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("failed to check wether we have VIP; %v", err)
+			}).String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Stack("")
+		}
+		if hasVIP {
+			if ltsvlog.Logger.DebugEnabled() {
+				ltsvlog.Logger.Debug().String("msg", "I have VIP").Stringer("vip", vipCfg.ip).Log()
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }

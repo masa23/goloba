@@ -21,9 +21,10 @@ const (
 
 // Starter is a server starter.
 type Starter struct {
-	envListenFDs     string
-	workingDirectory string
-	listeners        []net.Listener
+	envListenFDs                  string
+	workingDirectory              string
+	listeners                     []net.Listener
+	gracefulShutdownSignalToChild syscall.Signal
 }
 
 // Option is the type for configuring a Starter.
@@ -32,7 +33,8 @@ type Option func(s *Starter)
 // New returns a new Starter.
 func New(options ...Option) *Starter {
 	s := &Starter{
-		envListenFDs: defaultEnvListenFDs,
+		envListenFDs:                  defaultEnvListenFDs,
+		gracefulShutdownSignalToChild: syscall.SIGTERM,
 	}
 	for _, o := range options {
 		o(s)
@@ -48,12 +50,21 @@ func SetEnvName(name string) Option {
 	}
 }
 
+// SetGracefulShutdownSignalToChild sets the signal to send to child for graceful shutdown.
+// If no SetGracefulShutdownSignalToChild is called, the default value is syscall.SIGTERM.
+func SetGracefulShutdownSignalToChild(sig syscall.Signal) Option {
+	return func(s *Starter) {
+		s.gracefulShutdownSignalToChild = sig
+	}
+}
+
 // RunMaster starts a worker process and run the loop for starting and stopping the worker
 // on signals.
 //
 // If the master process receives a SIGHUP, it starts a new worker and stop the old worker
-// by sending a SIGTERM signal.
-// If the master process receives a SIGTERM, it sends the SIGTER to the worker and exists.
+// by sending a signal set by SetGracefulShutdownSignalToChild.
+// If the master process receives a SIGINT or a SIGTERM, it sends the SIGTERM to the worker
+// and exists.
 func (s *Starter) RunMaster(listeners ...net.Listener) error {
 	s.listeners = listeners
 	wd, err := os.Getwd()
@@ -80,9 +91,9 @@ func (s *Starter) RunMaster(listeners ...net.Listener) error {
 				return fmt.Errorf("error in RunMaster after starting new worker; %v", err)
 			}
 
-			err = syscall.Kill(childPID, syscall.SIGTERM)
+			err = syscall.Kill(childPID, s.gracefulShutdownSignalToChild)
 			if err != nil {
-				return fmt.Errorf("error in RunMaster after sending SIGTERM to worker pid=%d after receiving SIGHUP; %v", childPID, err)
+				return fmt.Errorf("error in RunMaster after sending signal %q to worker pid=%d after receiving SIGHUP; %v", s.gracefulShutdownSignalToChild, childPID, err)
 			}
 
 			_, err = syscall.Wait4(childPID, nil, 0, nil)
