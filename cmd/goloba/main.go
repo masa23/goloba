@@ -35,7 +35,7 @@ func main() {
 	ltsvlog.Logger = ltsvlog.NewLTSVLogger(errorLogFile, conf.EnableDebugLog)
 
 	pid := os.Getpid()
-	starter := serverstarter.New()
+	starter := serverstarter.New(serverstarter.SetGracefulShutdownSignalToChild(syscall.SIGUSR1))
 	if starter.IsMaster() {
 		err = runMaster(starter, conf, pid)
 		if err != nil {
