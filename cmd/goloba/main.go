@@ -16,15 +16,20 @@ import (
 )
 
 func main() {
-	var configfile string
-	flag.StringVar(&configfile, "config", "/etc/goloba/goloba.yml", "Config File")
+	configPath := flag.String("config", "/etc/goloba/goloba.yml", "Config file path")
+	checkConfigOnly := flag.Bool("t", false, "check config and exit")
 	flag.Parse()
 
-	conf, err := goloba.LoadConfig(configfile)
+	conf, err := goloba.LoadConfig(*configPath)
 	if err != nil {
-		ltsvlog.Logger.Err(err)
+		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}
+	if *checkConfigOnly {
+		fmt.Fprintf(os.Stderr, "config check OK\n")
+		return
+	}
+
 	// Setup the error logger
 	errorLogFile, err := os.OpenFile(conf.ErrorLog, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
