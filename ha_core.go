@@ -325,28 +325,14 @@ func (n *haNode) sendAdvertisements() {
 		// safe.
 		select {
 		case <-ticker.C:
-			if err := n.conn.send(n.newAdvertisement(), n.MasterAdvertInterval); err != nil {
-				select {
-				case n.errChannel <- err:
-				default:
-					ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
-						return fmt.Errorf("sendAdvertisements: Unable to write to errChannel. Error was: %v", err)
-					}).Stack(""))
-					os.Exit(1)
-				}
-				break
-			}
-
-			sendCount := atomic.AddUint64(&n.sendCount, 1)
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "sendAdvertisements: Sent advertisements").Uint64("sendCount", sendCount).Log()
-			}
+			n.doSendMasterAdvertisement()
 
 		case newState := <-n.stopSenderChannel:
 			ticker.Stop()
 			if newState == haShutdown {
 				if n.keepVIPsDuringRestart {
-					ltsvlog.Logger.Info().String("msg", "don't send shutdown advertisement since we are doing graceful restart").Log()
+					n.doSendMasterAdvertisement()
+					ltsvlog.Logger.Info().String("msg", "sent last master advertisement before graceful restart").Log()
 				} else {
 					advert := n.newAdvertisement()
 					advert.Priority = 0
@@ -359,6 +345,24 @@ func (n *haNode) sendAdvertisements() {
 			}
 			return
 		}
+	}
+}
+
+func (n *haNode) doSendMasterAdvertisement() {
+	if err := n.conn.send(n.newAdvertisement(), n.MasterAdvertInterval); err != nil {
+		select {
+		case n.errChannel <- err:
+		default:
+			ltsvlog.Logger.Err(ltsvlog.WrapErr(err, func(err error) error {
+				return fmt.Errorf("sendAdvertisements: Unable to write to errChannel. Error was: %v", err)
+			}).Stack(""))
+			os.Exit(1)
+		}
+	}
+
+	sendCount := atomic.AddUint64(&n.sendCount, 1)
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "sendAdvertisements: Sent advertisements").Uint64("sendCount", sendCount).Log()
 	}
 }
 
