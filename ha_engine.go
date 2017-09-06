@@ -44,6 +44,10 @@ func (e *haEngine) InitialHAState() (haState, error) {
 }
 
 func (e *haEngine) HAState(state haState) error {
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "HAState start").Stringer("haState", state).Log()
+		defer ltsvlog.Logger.Debug().String("msg", "HAState exiting").Stringer("haState", state).Log()
+	}
 	c := e.config
 	for i, vipCfg := range c.vips {
 		if ltsvlog.Logger.DebugEnabled() {
@@ -60,6 +64,9 @@ func (e *haEngine) HAState(state haState) error {
 }
 
 func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig) error {
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "updateHAStateForVIP").Stringer("haState", state).Stringer("vip", vipCfg.ip).Log()
+	}
 	c := e.config
 	hasVIP, err := netutil.HasAddr(c.vipInterface, vipCfg.ip)
 	if err != nil {
@@ -70,11 +77,10 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 
 	if state == haMaster {
 		if hasVIP {
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "HAState called but already acquired VIP").Fmt("state", "%v", state).
-					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
-					Stringer("mask", vipCfg.ipNet.Mask).Log()
-			}
+			ltsvlog.Logger.Info().String("msg", "do nothing since already acquired VIP").
+				Fmt("state", "%v", state).
+				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
+				Stringer("mask", vipCfg.ipNet.Mask).Log()
 		} else {
 			err := netutil.AddAddr(c.vipInterface, vipCfg.ip, vipCfg.ipNet, "")
 			if err != nil {
@@ -112,11 +118,10 @@ func (e *haEngine) updateHAStateForVIP(state haState, vipCfg *haEngineVIPConfig)
 					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).Log()
 			}
 		} else {
-			if ltsvlog.Logger.DebugEnabled() {
-				ltsvlog.Logger.Debug().String("msg", "HAState called but already released VIP").Fmt("state", "%v", state).
-					String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
-					Stringer("mask", vipCfg.ipNet.Mask).Log()
-			}
+			ltsvlog.Logger.Info().String("msg", "do nothing since already released VIP").
+				Fmt("state", "%v", state).
+				String("interface", c.vipInterface.Name).Stringer("vip", vipCfg.ip).
+				Stringer("mask", vipCfg.ipNet.Mask).Log()
 			return nil
 		}
 		if vipCfg.cancel != nil {

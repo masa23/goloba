@@ -21,7 +21,6 @@ import (
 type apiServer struct {
 	httpServer *http.Server
 	requestID  uint64
-	done       chan struct{}
 }
 
 func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listener) {
@@ -61,7 +60,6 @@ func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listene
 	requestIDPrefix := append(strconv.AppendInt(nil, time.Now().UnixNano(), 36), '_')
 	l.apiServer = &apiServer{
 		httpServer: &http.Server{Addr: l.config.API.ListenAddress},
-		done:       make(chan struct{}),
 	}
 	generateRequestID := func(req *http.Request) string {
 		id := atomic.AddUint64(&l.apiServer.requestID, 1)
@@ -76,7 +74,6 @@ func (l *LoadBalancer) runAPIServer(ctx context.Context, listeners []net.Listene
 	ltsvlog.Logger.Info().String("msg", "shutting down API server").Log()
 	l.apiServer.httpServer.Shutdown(context.TODO())
 	ltsvlog.Logger.Info().String("msg", "finished shutting down API server").Log()
-	l.apiServer.done <- struct{}{}
 }
 
 func wrapWithErrHandler(next func(w http.ResponseWriter, r *http.Request) *webapputil.HTTPError) http.Handler {

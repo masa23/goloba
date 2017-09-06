@@ -342,20 +342,31 @@ func (l *LoadBalancer) Run(ctx context.Context, listeners []net.Listener) error 
 			return fmt.Errorf("failed to load config, err=%v", err)
 		})
 	}
+	var wg sync.WaitGroup
 	if l.vrrpNode != nil {
-		go l.vrrpNode.run(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.vrrpNode.run(ctx)
+		}()
 	}
-	go l.runHealthCheckLoop(ctx, l.config)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		l.runHealthCheckLoop(ctx, l.config)
+	}()
 	if l.config.API.ListenAddress != "" {
-		go l.runAPIServer(ctx, listeners)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.runAPIServer(ctx, listeners)
+		}()
 	}
 	<-ctx.Done()
-	if l.config.API.ListenAddress != "" {
-		if ltsvlog.Logger.DebugEnabled() {
-			ltsvlog.Logger.Debug().String("msg", "waiting API server to shutdown").Log()
-		}
-		<-l.apiServer.done
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "LoadBalancer.Run ctx canceled").Log()
 	}
+	wg.Wait()
 	if ltsvlog.Logger.DebugEnabled() {
 		ltsvlog.Logger.Debug().String("msg", "exiting Run").Log()
 	}

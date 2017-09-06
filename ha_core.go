@@ -205,12 +205,24 @@ func (n *haNode) becomeShutdown() {
 		ltsvlog.Logger.Err(ltsvlog.Err(fmt.Errorf("Failed to notify engine: %v", err)).Stack(""))
 	}
 
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "Node.becomeShutdown after HAState(haShutdown)").Log()
+	}
 	if n.state() == haMaster {
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "Node.becomeShutdown sending haShutdown to stop SenderChannel").Log()
+		}
 		n.stopSenderChannel <- haShutdown
 		// Sleep for a moment so sendAdvertisements() has a chance to send the shutdown advertisement.
 		time.Sleep(500 * time.Millisecond)
+		if ltsvlog.Logger.DebugEnabled() {
+			ltsvlog.Logger.Debug().String("msg", "Node.becomeShutdown after Sleep").Log()
+		}
 	}
 	n.setState(haShutdown)
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "Node.becomeShutdown exiting").Log()
+	}
 }
 
 func (n *haNode) doMasterTasks(ctx context.Context) haState {
@@ -350,6 +362,7 @@ func (n *haNode) sendAdvertisements() {
 							return fmt.Errorf("sendAdvertisements: Failed to send shutdown Advertisement, %v", err)
 						}).Stack(""))
 					}
+					ltsvlog.Logger.Info().String("msg", "sent shutdown advertisement").Log()
 				}
 			}
 			return
@@ -399,4 +412,7 @@ func (n *haNode) receiveAdvertisements() {
 func (n *haNode) SetKeepVIPsDuringRestart(keep bool) {
 	n.keepVIPsDuringRestart = keep
 	n.engine.SetKeepVIPsDuringRestart(keep)
+	if ltsvlog.Logger.DebugEnabled() {
+		ltsvlog.Logger.Debug().String("msg", "SetKeepVIPsDuringRestart").Bool("keep", keep).Log()
+	}
 }
